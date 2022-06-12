@@ -33,20 +33,22 @@ $desktop: $phone + 1px;
 
     // https://github.com/patternfly/patternfly/issues/4541
     .search {
+        background: transparent !important;
         padding: var(--pf-global--spacer--md) var(--pf-global--spacer--md) var(--pf-global--spacer--sm);
 
-        > .pf-c-input-group {
+        > .pf-c-text-input-group__main {
             background: var(--ct-color-nav);
             color: var(--ct-color-nav-text) !important;
             transition: var(--pf-global--Transition);
         }
 
-        .pf-c-search-input__text::after,
-        .pf-c-search-input__text::before {
+        .pf-c-text-input-group__text::after,
+        .pf-c-text-input-group__text::before {
             border: none;
         }
 
-        svg {
+        .pf-c-text-input-group__icon {
+            padding: var(--pf-global--spacer--md) var(--pf-global--spacer--md) var(--pf-global--spacer--sm) !important;
             color: #fff;
         }
 
