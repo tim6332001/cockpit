@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,11 +17,11 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from netlib import *
-from testlib import *
+import parent  # noqa: F401
+from netlib import NetworkCase
+from testlib import nondestructive, skipDistroPackage, skipImage, test_main, wait
 
-from machine_core.constants import TEST_OS_DEFAULT
+from lib.constants import TEST_OS_DEFAULT
 
 
 @nondestructive
@@ -30,7 +30,6 @@ from machine_core.constants import TEST_OS_DEFAULT
 class TestBonding(NetworkCase):
     def testBasic(self):
         b = self.browser
-        m = self.machine
 
         self.login_and_go("/network")
 
@@ -68,11 +67,6 @@ class TestBonding(NetworkCase):
         b.click("#network-bond-settings-dialog button:contains('Save')")
         b.wait_not_present("#network-bond-settings-dialog")
         b.wait_visible("#networking-interfaces tr[data-interface='tbond']")
-
-        # Check that the configuration file has the expected sane name
-        # on systems that use "network-scripts".
-        if m.image not in ["fedora-coreos", "fedora-testing", "fedora-36"]:
-            m.execute("! test -d /etc/sysconfig || test -f /etc/sysconfig/network-scripts/ifcfg-tbond")
 
         # Check that the members are displayed and both On
         b.click("#networking-interfaces tr[data-interface='tbond'] button")

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -20,8 +20,8 @@
 import time
 import os
 
-import parent
-from testlib import *
+import parent  # noqa: F401
+from testlib import MachineCase, nondestructive, skipDistroPackage, skipImage, test_main
 
 RHEL_DOC_BASE = "https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/managing_systems_using_the_rhel_8_web_console"
 
@@ -67,7 +67,8 @@ class TestPages(MachineCase):
     def testBasic(self):
         m = self.machine
         b = self.browser
-        self.restore_dir("/etc/systemd/system", post_restore_action="systemctl stop test.timer test.service; systemctl daemon-reload")
+        self.restore_dir("/etc/systemd/system", post_restore_action="systemctl daemon-reload")
+        self.addCleanup(m.execute, "systemctl stop test.timer test.service")
         m.write("/etc/systemd/system/test.service",
                 """
 [Unit]
@@ -420,7 +421,7 @@ OnCalendar=daily
 
         self.login_and_go()
 
-        filter_sel = ".pf-c-search-input__text-input"
+        filter_sel = ".pf-c-text-input-group__text-input"
 
         # Check that some page disappears and some stay
         b.focus(filter_sel)

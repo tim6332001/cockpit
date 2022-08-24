@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -22,8 +22,8 @@ import time
 import os
 import subprocess
 
-import parent
-from testlib import *
+import parent  # noqa: F401
+from testlib import MachineCase, TEST_DIR, nondestructive, skipBrowser, skipDistroPackage, skipImage, test_main, wait
 
 
 @skipDistroPackage()
@@ -772,15 +772,15 @@ class TestConnection(MachineCase):
         self.assertIn('id="overview"', out)
 
         # shut it down, wait until it is gone
-        m.execute("pkill -ef cockpit-ws")
+        m.execute("pkill cockpit-ws; while pgrep -a cockpit-ws; do sleep 1; done")
 
         # start ws with --local-session and existing running bridge
-        script = '''#!/bin/bash -eu
+        self.write_file("/tmp/local.sh", f'''#!/bin/bash -eu
 coproc env G_MESSAGES_DEBUG=all cockpit-bridge
-G_MESSAGES_DEBUG=all XDG_CONFIG_DIRS=/usr/local %s -p 9999 -a 127.0.0.90 --local-session=- <&${COPROC[0]} >&${COPROC[1]}
-''' % self.ws_executable
-        m.execute(["tee", "/tmp/local.sh"], input=script)
-        self.addCleanup(m.execute, "rm /tmp/local.sh")
+export G_MESSAGES_DEBUG=all
+export XDG_CONFIG_DIRS=/usr/local
+{self.ws_executable} -p 9999 -a 127.0.0.90 --local-session=- <&${{COPROC[0]}} >&${{COPROC[1]}}
+''')
         m.execute("chmod a+x /tmp/local.sh")
         m.spawn("su - -c /tmp/local.sh admin", "local.sh")
         m.wait_for_cockpit_running('127.0.0.90', 9999)
@@ -788,6 +788,9 @@ G_MESSAGES_DEBUG=all XDG_CONFIG_DIRS=/usr/local %s -p 9999 -a 127.0.0.90 --local
         # System frame should work directly, no login page
         out = m.execute("curl --compressed http://127.0.0.90:9999/cockpit/@localhost/system/index.html")
         self.assertIn('id="overview"', out)
+
+        # shut it down, wait until it is gone
+        m.execute("pkill cockpit-ws; while pgrep -a cockpit-ws; do sleep 1; done")
 
         self.allow_journal_messages("couldn't register polkit authentication agent.*")
 
@@ -1049,31 +1052,39 @@ ProtocolHeader = X-Forwarded-Proto
         m.execute("setsebool -P httpd_can_network_connect on")
         self.allow_journal_messages("audit.*bool=httpd_can_network_connect.*val=1.*")
 
-    def checkCockpitOnProxy(self, urlroot=""):
-        b = self.browser
-
+    def callProxyCurl(self, path, *args):
         # should use nginx' certificate, not cockpit's; use --resolve so that SNI matches the certificate's CN
         (https_host, https_port) = self.machine.forward["443"].split(':')
-        out = subprocess.check_output(
-            ["curl", "--verbose", "--head",
+        return subprocess.check_output(
+            ["curl", "--verbose",
              "--resolve", f"alice:{https_port}:{https_host}",
              "--cacert", os.path.join(TEST_DIR, "../src/tls/ca/ca.pem"),
-             f"https://alice:{https_port}{urlroot}/cockpit/static/login.html"],
+             *args,
+             f"https://alice:{https_port}{path}"],
             stderr=subprocess.STDOUT)
+
+    def checkCockpitOnProxy(self, urlroot="", login=True):
+        b = self.new_browser()
+
+        out = self.callProxyCurl(f"{urlroot}/cockpit/static/login.html", "--head")
         self.assertIn(b"HTTP/1.1 200 OK", out)
         self.assertIn(b"subject: CN=alice; DC=COCKPIT", out)
 
         # works with browser (but we can't set our CA)
         b.ignore_ssl_certificate_errors(True)
+        (https_host, https_port) = self.machine.forward["443"].split(':')
         b.open(f"https://{https_host}:{https_port}{urlroot}/system")
-        b.wait_visible("#login")
-        b.set_val("#login-user-input", "admin")
-        b.set_val("#login-password-input", "foobar")
-        b.click('#login-button')
+        if login:
+            b.wait_visible("#login")
+            b.set_val("#login-user-input", "admin")
+            b.set_val("#login-password-input", "foobar")
+            b.click('#login-button')
         b.wait_visible('#content')
-        # check that we show up in the system logs from the browser's IP, not the proxy's
-        self.assertIn('(172.27.0.2)', self.machine.execute('who'))
+        if login:
+            # check that we show up in the system logs from the browser's IP, not the proxy's
+            self.assertIn('(172.27.0.2)', self.machine.execute('who'))
         b.logout()
+        b.cdp.invoke("Browser.close")
 
     @skipImage("nginx not installed", "centos-8-stream", "debian-stable", "debian-testing", "fedora-coreos",
                "rhel-8-7", "rhel-9-1", "ubuntu-stable", "ubuntu-2204", "arch")
@@ -1134,19 +1145,14 @@ server {
                  "/srv/www/embed-cockpit/")
         m.execute("if selinuxenabled 2>&1; then chcon -R -t httpd_sys_content_t /srv/www; fi")
 
-        (https_host, https_port) = self.machine.forward["443"].split(':')
-        out = subprocess.check_output(
-            ["curl", "--verbose",
-             "--resolve", f"alice:{https_port}:{https_host}",
-             "--cacert", os.path.join(TEST_DIR, "../src/tls/ca/ca.pem"),
-             f"https://alice:{https_port}/embed-cockpit/embed.css"],
-            stderr=subprocess.STDOUT)
+        out = self.callProxyCurl("/embed-cockpit/embed.css")
         self.assertIn(b"HTTP/1.1 200 OK", out)
         self.assertIn(b"#embed-links", out)
 
         # embedding
         b = self.browser
         b.ignore_ssl_certificate_errors(True)
+        (https_host, https_port) = self.machine.forward["443"].split(':')
         b.open(f"https://{https_host}:{https_port}/embed-cockpit/index.html")
         b.set_val("#embed-address", f"https://{https_host}:{https_port}/cockpit-root")
         b.click("#embed-full")
@@ -1199,13 +1205,39 @@ server {
 
         m.execute("systemctl start nginx")
 
+        def run_ws(extra_opts=""):
+            m.spawn(f"su -s /bin/sh -c '{self.libexecdir}/cockpit-ws --address=127.0.0.1 --for-tls-proxy {extra_opts}' cockpit-wsinstance", "ws.log")
+            m.wait_for_cockpit_running()
+
+        def kill_ws():
+            m.execute("pkill cockpit-ws; while pgrep -a cockpit-ws; do sleep 1; done")
+
         # start cockpit-ws in proxy mode, skip all the ws-certs.d/ steps
-        m.spawn(f"su -s /bin/sh -c '{self.libexecdir}/cockpit-ws --address=127.0.0.1 --for-tls-proxy' cockpit-wsinstance", "ws.log")
-        m.wait_for_cockpit_running()
-
+        run_ws()
         self.checkCockpitOnProxy()
+        kill_ws()
 
+        # works also without the login page (krb, oauth, --local-session, etc.)
+        run_ws("--local-session=cockpit-bridge")
+        self.checkCockpitOnProxy(login=False)
+        kill_ws()
+
+        # UrlRoot + login page
+        m.write("/etc/cockpit/cockpit.conf", "UrlRoot = myroot\n", append=True)
+        self.sed_file("s_location /_location /myroot_", "/etc/nginx/conf.d/cockpit.conf",
+                      "systemctl restart nginx")
+        run_ws()
+        self.checkCockpitOnProxy(urlroot="/myroot")
+        kill_ws()
+
+        # UrlRoot without login page
+        run_ws("--local-session=cockpit-bridge")
+        self.checkCockpitOnProxy(urlroot="/myroot", login=False)
+        kill_ws()
+
+        self.allow_restart_journal_messages()
         self.allow_journal_messages("couldn't register polkit authentication agent.*")
+        self.allow_journal_messages("couldn't change to runtime dir.*Permission denied")
 
 
 if __name__ == '__main__':

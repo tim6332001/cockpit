@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,10 +17,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from packagelib import *
-from storagelib import *
-from testlib import *
+import parent  # noqa: F401
+from packagelib import PackageCase
+from storagelib import StorageCase, StorageHelpers
+from testlib import nondestructive, skipImage, test_main
 
 
 @nondestructive
@@ -271,7 +271,9 @@ class TestStorageNfs(StorageCase):
         b.click("#detail-header button:contains(Unmount)")
         self.dialog_wait_open()
         b.wait_in_text("#dialog", str(sleep_pid))
-        b.assert_pixels("#dialog", "umount", ignore=["td:nth-child(1)", "td:nth-child(4)"])
+        b.wait_in_text("#dialog", "sleep infinity")
+        b.wait_in_text("#dialog", "The listed processes will be forcefully stopped.")
+        b.wait_in_text("#dialog", "Stop and unmount")
         self.dialog_apply()
 
         b.wait_visible("#detail-header button:contains(Mount)")
@@ -279,7 +281,6 @@ class TestStorageNfs(StorageCase):
 
 # Re-use allowed journal messages from StorageCase
 @skipImage("No udisks/cockpit-storaged on OSTree images", "fedora-coreos")
-@skipImage("TODO: bug in refreshing removed/installed state on Arch Linux", "arch")
 @nondestructive
 class TestStoragePackagesNFS(PackageCase, StorageCase, StorageHelpers):
 

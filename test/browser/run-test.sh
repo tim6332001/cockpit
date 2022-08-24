@@ -21,14 +21,14 @@ fi
 # tests need cockpit's bots/ libraries
 git clone --depth=1 https://github.com/cockpit-project/bots
 
-# support running from clean git tree
-if [ ! -d node_modules/chrome-remote-interface ]; then
-    npm install chrome-remote-interface sizzle
+# release tarballs include the necessary npm modules for testing
+if [ -d .git ]; then
+    ./tools/node-modules checkout
 fi
 
 export TEST_OS="${ID}-${VERSION_ID/./-}"
 # HACK: upstream does not yet know about rawhide
-if [ "$TEST_OS" = "fedora-37" ]; then
+if [ "$TEST_OS" = "fedora-38" ]; then
     export TEST_OS=fedora-36
 fi
 
@@ -125,6 +125,7 @@ if [ -n "$test_basic" ]; then
               TestFirewall.testAddCustomServices
               TestFirewall.testNetworkingPage
 
+              TestNetworkingBasic.testIpHelper
               TestNetworkingBasic.testNoService
 
               TestLogin.testConversation

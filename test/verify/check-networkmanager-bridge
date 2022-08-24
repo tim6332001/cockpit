@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,9 +17,9 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from netlib import *
-from testlib import *
+import parent  # noqa: F401
+from netlib import NetworkCase
+from testlib import nondestructive, skipDistroPackage, skipImage, test_main
 
 
 @nondestructive
@@ -28,7 +28,6 @@ from testlib import *
 class TestBridge(NetworkCase):
     def testBasic(self):
         b = self.browser
-        m = self.machine
 
         self.login_and_go("/network")
         b.wait_visible("#networking")
@@ -59,11 +58,6 @@ class TestBridge(NetworkCase):
         b.click("#network-bridge-settings-dialog button:contains('Save')")
         b.wait_not_present("#network-bridge-settings-dialog")
         b.wait_visible("#networking-interfaces tr[data-interface='tbridge']")
-
-        # Check that the configuration file has the expected sane name
-        # on systems that use "network-scripts".
-        if "ubuntu" not in m.image and "debian" not in m.image and m.image not in ["fedora-coreos", "fedora-testing", "fedora-36"]:
-            m.execute("! test -d /etc/sysconfig || test -f /etc/sysconfig/network-scripts/ifcfg-tbridge")
 
         # Check that the members are displayed and both On
         b.click("#networking-interfaces tr[data-interface='tbridge'] button")

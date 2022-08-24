@@ -72,6 +72,7 @@ const CreateTimerDialogBody = ({ owner }) => {
     const [repeat, setRepeat] = useState('no');
     const [repeatPatterns, setRepeatPatterns] = useState([]);
     const [specificTime, setSpecificTime] = useState("00:00");
+    const [isSpecificTimeOpen, setSpecificTimeOpen] = useState(false);
     const [submitted, setSubmitted] = useState(false);
     const [commandNotFound, setCommandNotFound] = useState(false);
     const validationFailed = {};
@@ -89,9 +90,15 @@ const CreateTimerDialogBody = ({ owner }) => {
         <TimePicker className="create-timer-time-picker"
                     time={repeatPatterns[idx].time || "00:00"}
                     is24Hour
+                    isOpen={repeatPatterns[idx].isOpen || false}
+                    setIsOpen={isOpen => {
+                        const arr = JSON.parse(JSON.stringify(repeatPatterns));
+                        arr[idx].isOpen = isOpen;
+                        setRepeatPatterns(arr);
+                    }}
                     menuAppendTo={() => document.body}
                     onChange={time => {
-                        const arr = [...repeatPatterns];
+                        const arr = JSON.parse(JSON.stringify(repeatPatterns));
                         arr[idx].time = time;
                         setRepeatPatterns(arr);
                     }}
@@ -176,18 +183,18 @@ const CreateTimerDialogBody = ({ owner }) => {
                 </FormGroup>
                 <FormGroup label={_("Trigger")} hasNoPaddingTop>
                     <Flex>
-                        <Radio value="system-boot"
-                               id="system-boot"
-                               name="boot-or-specific-time"
-                               onChange={() => setDelay("system-boot")}
-                               isChecked={delay == "system-boot"}
-                               label={_("After system boot")} />
                         <Radio value="specific-time"
                                id="specific-time"
                                name="boot-or-specific-time"
                                onChange={() => setDelay("specific-time")}
                                isChecked={delay == "specific-time"}
                                label={_("At specific time")} />
+                        <Radio value="system-boot"
+                               id="system-boot"
+                               name="boot-or-specific-time"
+                               onChange={() => setDelay("system-boot")}
+                               isChecked={delay == "system-boot"}
+                               label={_("After system boot")} />
                     </Flex>
                     { delay == "system-boot" &&
                     <FormGroup className="delay-group"
@@ -243,6 +250,7 @@ const CreateTimerDialogBody = ({ owner }) => {
                         {repeat == "no" &&
                         <FormGroup label={_("Run at")}>
                             <TimePicker className="create-timer-time-picker specific-no-repeat"
+                                        isOpen={isSpecificTimeOpen} setIsOpen={setSpecificTimeOpen}
                                         menuAppendTo={() => document.body} time={specificTime} is24Hour onChange={setSpecificTime} />
                         </FormGroup>}
                         {repeatPatterns.map((item, idx) => {

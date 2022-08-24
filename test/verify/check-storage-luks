@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,9 +17,9 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from storagelib import *
-from testlib import *
+import parent  # noqa: F401
+from storagelib import StorageCase
+from testlib import skipImage, test_main, wait
 
 
 class TestStorageLuks(StorageCase):
@@ -195,10 +195,6 @@ class TestStorageLuks(StorageCase):
         b = self.browser
 
         mount_point_secret = "/run/secret"
-
-        if m.image == "ubuntu-stable":
-            # ubuntu-stable needs this workaround.
-            m.execute("mkdir -p /var/db/tang")
 
         m.execute("systemctl start tangd.socket")
 

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,9 +17,9 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from storagelib import *
-from testlib import *
+import parent  # noqa: F401
+from storagelib import StorageCase
+from testlib import test_main
 
 
 class TestStorageMounting(StorageCase):
@@ -72,8 +72,11 @@ ExecStart=/usr/bin/sleep infinity
 
         self.content_dropdown_action(1, "Unmount")
         b.wait_in_text("#dialog", str(sleep_pid))
+        b.wait_in_text("#dialog", "sleep infinity")
         b.wait_in_text("#dialog", "keep-mnt-busy")
-        b.assert_pixels("#dialog", "busy-unmount", ignore=["td:nth-child(1)", "td:nth-child(4)"])
+        b.wait_in_text("#dialog", "Test Service")
+        b.wait_in_text("#dialog", "/usr/bin/sleep infinity")
+        b.wait_in_text("#dialog", "The listed processes and services will be forcefully stopped.")
         self.confirm()
         self.content_tab_wait_in_info(1, 1, "Mount point", "The filesystem is not mounted")
 

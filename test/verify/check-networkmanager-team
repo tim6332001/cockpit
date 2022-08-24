@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,10 +17,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
+import parent  # noqa: F401
 import json
-from netlib import *
-from testlib import *
+from netlib import NetworkCase
+from testlib import nondestructive, skipDistroPackage, skipImage, test_main
 
 
 @skipImage("NetworkManager-team not installed", "fedora-coreos")
@@ -30,7 +30,6 @@ from testlib import *
 class TestTeam(NetworkCase):
     def testBasic(self):
         b = self.browser
-        m = self.machine
 
         self.login_and_go("/network")
 
@@ -63,11 +62,6 @@ class TestTeam(NetworkCase):
         b.wait_attr("#networking", "data-test-wait", "false")
         b.wait(lambda: 'nmcli con show | grep tteam')
         b.wait_visible("#networking-interfaces tr[data-interface='tteam']")
-
-        # Check that the configuration file has the expected sane name
-        # on systems that use "network-scripts".
-        if m.image not in ["fedora-coreos", "fedora-testing", "fedora-36"]:
-            m.execute("! test -d /etc/sysconfig || test -f /etc/sysconfig/network-scripts/ifcfg-tteam")
 
         # Check that the members are displayed
         self.select_iface('tteam')

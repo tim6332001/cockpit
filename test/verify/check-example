@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -22,8 +22,8 @@ import sys
 import time
 import unittest
 
-import parent
-from testlib import *
+import parent  # noqa: F401
+from testlib import MachineCase, nondestructive, skipDistroPackage, skipPackage, test_main
 from fmf_metadata import FMF
 
 

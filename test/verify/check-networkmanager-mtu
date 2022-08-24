@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,11 +17,11 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from netlib import *
-from testlib import *
+import parent  # noqa: F401
+from netlib import NetworkCase
+from testlib import skipDistroPackage, skipImage, test_main, wait
 
-from machine_core.constants import TEST_OS_DEFAULT
+from lib.constants import TEST_OS_DEFAULT
 
 
 @skipDistroPackage()

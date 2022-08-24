@@ -235,20 +235,14 @@
     /* Sets values for application, url_root and login_path */
     function setup_path_globals (path) {
         const parser = document.createElement('a');
-        let base = document.baseURI;
-        /* Some IEs don't support baseURI */
-        if (!base) {
-            const base_tags = document.getElementsByTagName("base");
-            if (base_tags.length > 0)
-                base = base_tags[0].href;
-            else
-                base = "/";
-        }
+        // send_login_html() sets <base> to UrlRoot
+        const base = document.baseURI;
 
         path = path || "/";
         parser.href = base;
         if (parser.pathname != "/") {
             url_root = parser.pathname.replace(/^\/+|\/+$/g, '');
+            // deprecated: for connecting to cockpit.js < 272
             localStorage.setItem('url-root', url_root);
             if (url_root && path.indexOf('/' + url_root) === 0)
                 path = path.replace('/' + url_root, '') || '/';
@@ -592,7 +586,7 @@
             const b2 = document.createElement("button");
             b2.title = _("Remove host");
             b2.ariaLabel = b2.title;
-            b2.classList.add("pf-c-button", "pf-m-tertiary", "host-remove");
+            b2.classList.add("host-remove");
             b2.addEventListener("click", () => {
                 const i = hosts.indexOf(host);
                 hosts.splice(i, 1);
@@ -843,7 +837,7 @@
         id("login-button").setAttribute('disabled', "true");
         id("login-button").setAttribute('spinning', "true");
         const xhr = new XMLHttpRequest();
-        xhr.open("GET", login_path, true);
+        xhr.open(method, login_path, true);
 
         for (const k in headers)
             xhr.setRequestHeader(k, headers[k]);
@@ -963,6 +957,7 @@
 
         /* URL Root is set by cockpit ws and shouldn't be prefixed
          * by application
+         * deprecated: for connecting to cockpit.js < 272
          */
         if (url_root)
             localStorage.setItem('url-root', url_root);

@@ -21,10 +21,16 @@
 
 let url_root;
 
-try {
-    // Sometimes this throws a SecurityError such as during testing
-    url_root = window.localStorage.getItem('url-root');
-} catch (e) { }
+const meta_url_root = document.head.querySelector("meta[name='url-root']");
+if (meta_url_root) {
+    url_root = meta_url_root.content.replace(/^\/+|\/+$/g, '');
+} else {
+    // fallback for cockpit-ws < 272
+    try {
+        // Sometimes this throws a SecurityError such as during testing
+        url_root = window.localStorage.getItem('url-root');
+    } catch (e) { }
+}
 
 /* injected by tests */
 var mock = mock || { }; // eslint-disable-line no-use-before-define, no-var
@@ -310,7 +316,10 @@ function calculate_url(suffix) {
     if (!suffix)
         suffix = "socket";
     const window_loc = window.location.toString();
-    let _url_root = url_root;
+    /* this is not set by anything right now, just a client-side stub; see
+     * https://github.com/cockpit-project/cockpit/pull/17473 for the server-side and complete solution */
+    const meta_websocket_root = document.head.querySelector("meta[name='websocket-root']");
+    let _url_root = meta_websocket_root ? meta_websocket_root.content.replace(/^\/+|\/+$/g, '') : url_root;
 
     if (window.mock && window.mock.url)
         return window.mock.url;
@@ -2524,11 +2533,7 @@ function factory() {
                 href = href.substr(1);
 
             const pos = href.indexOf('?');
-            let first = href;
-            if (pos === -1)
-                first = href;
-            else
-                first = href.substr(0, pos);
+            const first = (pos === -1) ? href : href.substr(0, pos);
             const path = decode_path(first);
             if (pos !== -1 && options) {
                 href.substring(pos + 1).split("&")

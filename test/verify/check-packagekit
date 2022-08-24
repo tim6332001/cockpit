@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -18,11 +18,12 @@
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import re
 import time
 
-import parent
+import parent  # noqa: F401
 from packagelib import PackageCase
-from testlib import *
+from testlib import nondestructive, skipDistroPackage, skipImage, test_main
 
 
 WAIT_SCRIPT = """
@@ -359,14 +360,37 @@ echo -e "Loaded patch modules:\nkpatch_3_10_0_1062_1_1 [enabled]\n\nInstalled pa
 
         # should only have one button (no security updates)
         self.assertEqual(b.text("#available-updates button#install-all"), "Install all updates")
+
+        # stall the download of chocolate by replacing the package with a pipe, so that we can test cancelling
+        chocolate = m.execute(f"""set -eux;
+            p=$(ls {self.vm_tmpdir}/repo/chocolate*2.0*2*)
+            f={self.vm_tmpdir}/fifo
+            mkfifo $f
+            mount -o bind $f $p
+            echo $p""").strip()
+
         b.click("#available-updates button#install-all")
 
         # applying updates panel present
         b.wait_visible("#app div.pf-c-progress__bar")
 
-        b.wait_in_text(".progress-main-view button.progress-cancel", "Cancel")
-        # Cancel button should eventually get disabled
-        b.wait_visible(".progress-main-view button.progress-cancel:disabled")
+        # cancel the installation
+        b.wait_in_text(".progress-main-view button.pf-m-secondary", "Cancel")
+        b.click(".progress-main-view button.pf-m-secondary")
+        # abort the current download, so that read calls don't hang indefinitely
+        m.spawn(f"echo > {self.vm_tmpdir}/fifo", "fifo")
+
+        # going back to overview, nothing happened just yet
+        b.wait_not_present(".progress-main-view")
+        self.assertEqual(b.text("#available-updates button#install-all"), "Install all updates")
+        self.assertFalse(b.is_present("table.updates-history"))
+        m.execute("test -f /stamp-vanilla-1.0-1 && test -f /stamp-chocolate-2.0-1")
+
+        # update again; Cancel button should eventually disappear
+        m.execute(f"umount {chocolate}")
+        b.click("#available-updates button#install-all")
+        b.wait_visible(".progress-main-view")
+        b.wait_not_present(".progress-main-view button.pf-m-secondary")
 
         # update log only exists in the expander, collapsed by default
         self.assertFalse(b.is_visible("#update-log"))
@@ -953,6 +977,37 @@ ExecStart=/usr/local/bin/{packageName}
 
         # seems we can't verify that the description has a scrollbar
 
+    def testRebootAfterSuccess(self):
+        b = self.browser
+        m = self.machine
+
+        install_lockfile = "/tmp/finish-pk"
+        # create two updates; force installing chocolate before vanilla
+        self.createPackage("vanilla", "1.0", "1", install=True)
+        self.createPackage("vanilla", "1.0", "2",
+                           postinst="while [ ! -e {0} ]; do sleep 1; done; rm -f {0}".format(install_lockfile))
+        self.enableRepo()
+        m.execute("pkcon refresh")
+
+        m.start_cockpit()
+        b.login_and_go("/updates")
+        with b.wait_timeout(30):
+            b.wait_visible("#available-updates")
+        b.click("#available-updates button#install-all")
+
+        b.wait_visible("#app div.pf-c-progress__bar")
+        # auto-reboot is off by default
+        b.wait_visible("#reboot-after:not(:checked)")
+        b.click("#reboot-after")
+        b.wait_visible("#reboot-after:checked")
+
+        m.execute(f"touch {install_lockfile}")
+        # reboots automatically
+        b.switch_to_top()
+        b.wait_in_text(".curtains-ct h1", "Disconnected")
+        m.wait_reboot()
+        self.allow_restart_journal_messages()
+
     @nondestructive
     def testUpdateError(self):
         b = self.browser
@@ -1018,17 +1073,9 @@ ExecStart=/usr/local/bin/{packageName}
         # error message visible
         b.wait_in_text("#app .pf-c-page .pf-c-empty-state__body", "PackageKit crashed")
 
-        self.allow_journal_messages(".*org.freedesktop.PackageKit.*Error.NoReply.*")
-        self.allow_journal_messages("Process .* dumped core.*")
-        self.allow_journal_messages("Found module .* with build-id: .*")
-        self.allow_journal_messages("Stack trace of thread.*")
-        self.allow_journal_messages("#[0-9].*")
-        # https://fedoraproject.org/wiki/Changes/Package_information_on_ELF_objects
-        self.allow_journal_messages("Module .* with build-id .*")
-        self.allow_journal_messages("Metadata for module .* owned by .* found: .*")
-        self.allow_journal_messages('("type"|"name"|"version"|"architecture"|"osCpe") : .*')
-        self.allow_journal_messages("}")
-        self.allow_journal_messages("ELF object binary architecture: .*")
+        # this crash creates so many messages from systemd-coredump, debug metadata etc. that
+        # trying to keep up with specific patterns is too brittle
+        self.allow_journal_messages(".*")
 
     @nondestructive
     def testNoPackageKit(self):
@@ -1104,7 +1151,6 @@ class TestWsUpdate(NoSubManCase):
         # restarts the service and terminates the connection. As we can't
         # (efficiently) build a newer working cockpit-ws package, test the two
         # parts (reconnect and warning about disconnect) separately.
-        # This test is destructive and thus must run last.
 
         # no security updates, no changelogs
         b = self.browser
@@ -1131,7 +1177,13 @@ class TestWsUpdate(NoSubManCase):
         m.restart_cockpit()
         b.login_and_go("/updates")
 
-        b.wait_in_text(".pf-c-empty-state .pf-c-title", "Initializing")
+        b.wait_in_text("#app div.progress-description", "slow 1-2")
+        # progress bar has some reasonable value
+        b.wait_attr_contains(".progress-main-view .pf-c-progress__indicator", "style", "width:")
+        rm = re.search(r"width: (\d+)%;", b.attr(".progress-main-view .pf-c-progress__indicator", "style"))
+        progress = int(rm.group(1))
+        self.assertGreater(progress, 20)
+        self.assertLess(progress, 80)
 
         # finish the package installation
         m.execute(f"touch {install_lockfile}")
@@ -1356,7 +1408,8 @@ class TestAutoUpdates(NoSubManCase):
         super().setUp()
         # not implemented for yum and apt yet, only dnf
         self.supported_backend = self.backend in ["dnf"]
-        self.addCleanup(self.machine.execute, "systemctl disable --now dnf-automatic-install.timer 2>/dev/null; rm -rf /etc/systemd/system/dnf-automatic-*")
+        if self.backend == 'dnf':
+            self.addCleanup(self.machine.execute, "systemctl disable --now dnf-automatic-install.timer 2>/dev/null; rm -rf /etc/systemd/system/dnf-automatic-*")
 
     def closeSettings(self, browser):
         browser.click("#automatic-updates-dialog button:contains('Save changes')")
@@ -1536,7 +1589,6 @@ class TestAutoUpdates(NoSubManCase):
             # don't allow stomping over unparsable custom settings
             b.wait_not_present("#autoupdates-settings button")
 
-    @skipImage("TODO: Fails with 401 on our test runners", "arch")
     def testWithAvailableUpdates(self):
         b = self.browser
         m = self.machine

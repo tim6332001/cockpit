@@ -15,9 +15,7 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-"""
-Tools for writing Cockpit test cases.
-"""
+"""Tools for writing Cockpit test cases."""
 
 from time import sleep
 
@@ -37,7 +35,10 @@ import time
 import unittest
 import gzip
 import inspect
+import itertools
 import glob
+
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import testvm
 import cdp
@@ -140,12 +141,13 @@ default_layouts = [
 ]
 
 
-def attach(filename, move=False):
-    '''Put a file into the attachments directory
+def attach(filename: str, move: bool = False):
+    """Put a file into the attachments directory.
 
-    By default the file gets copied. You can set move=True for dynamically generated
-    files which are not touched by parallel tests.
-    '''
+    :param filename: file to put in attachments directory
+    :param move: set this to true to move dynamically generated files which
+                 are not touched by parallel tests. (default False)
+    """
     if not opts.attachments:
         return
     dest = os.path.join(opts.attachments, os.path.basename(filename))
@@ -191,14 +193,12 @@ class Browser:
     def title(self):
         return self.cdp.eval('document.title')
 
-    def open(self, href, cookie=None, tls=False):
-        """
-        Load a page into the browser.
+    def open(self, href: str, cookie: Optional[str] = None, tls: bool = False):
+        """Load a page into the browser.
 
-        Arguments:
-          href: The path of the Cockpit page to load, such as "/users".
-
-        Either PAGE or URL needs to be given.
+        :param href: the path of the Cockpit page to load, such as "/users". Either PAGE or URL needs to be given.
+        :param cookie: a dictionary object representing a cookie.
+        :param tls: load the page using https (default False)
 
         Raises:
           Error: When a timeout occurs waiting for the page to load.
@@ -207,7 +207,7 @@ class Browser:
             schema = tls and "https" or "http"
             href = "%s://%s:%s%s" % (schema, self.address, self.port, href)
 
-        if not self.current_layout:
+        if not self.current_layout and os.environ.get("TEST_SHOW_BROWSER") in [None, "pixels"]:
             self.current_layout = self.layouts[0]
             size = self.current_layout["shell_size"]
             self._set_window_size(size[0], size[1])
@@ -216,23 +216,45 @@ class Browser:
         self.switch_to_top()
         self.cdp.invoke("Page.navigate", url=href)
 
-    def set_user_agent(self, ua):
+    def set_user_agent(self, ua: str):
+        """Set the user agent of the browser
+
+        :param ua: user agent string
+        :type ua: str
+        """
         self.cdp.invoke("Emulation.setUserAgentOverride", userAgent=ua)
 
-    def reload(self, ignore_cache=False):
+    def reload(self, ignore_cache: bool = False):
+        """Reload the current page
+
+        :param ignore_cache: if true browser cache is ignored (default False)
+        :type ignore_cache: bool
+        """
+
         self.switch_to_top()
         self.wait_js_cond("ph_select('iframe.container-frame').every(function (e) { return e.getAttribute('data-loaded'); })")
         self.cdp.invoke("reloadPageAndWait", ignoreCache=ignore_cache)
 
         self.machine.allow_restart_journal_messages()
 
-    def switch_to_frame(self, name):
+    def switch_to_frame(self, name: str):
+        """Switch to frame in browser tab
+
+        Each page has a main frame and can have multiple subframes, usually
+        iframes.
+
+        :param name: frame name
+        """
         self.cdp.set_frame(name)
 
     def switch_to_top(self):
+        """Switch to the main frame
+
+        Switch to the main frame from for example an iframe.
+        """
         self.cdp.set_frame(None)
 
-    def upload_file(self, selector, file):
+    def upload_file(self, selector: str, file: str):
         r = self.cdp.invoke("Runtime.evaluate", expression='document.querySelector(%s)' % jsquote(selector))
         objectId = r["result"]["objectId"]
         self.cdp.invoke("DOM.setFileInputFiles", files=[file], objectId=objectId)
@@ -249,13 +271,21 @@ class Browser:
             msg += "\n" + trailer
         raise Error("%s(%s): %s" % (func, arg, msg))
 
-    # Execute js code that does not return anything
-    def inject_js(self, code):
+    def inject_js(self, code: str):
+        """Execute JS code that does not return anything
+
+        :param code: a string containing JavaScript code
+        :type code: str
+        """
         self.cdp.invoke("Runtime.evaluate", expression=code, trace=code,
                         silent=False, awaitPromise=True, returnByValue=False, no_trace=True)
 
-    # Execute js code that returns something
-    def eval_js(self, code, no_trace=False):
+    def eval_js(self, code: str, no_trace: bool = False) -> Optional[Any]:
+        """Execute JS code that returns something
+
+        :param code: a string containing JavaScript code
+        :param no_trace: do not print information about unknown return values (default False)
+        """
         result = self.cdp.invoke("Runtime.evaluate", expression=code, trace=code,
                                  silent=False, awaitPromise=True, returnByValue=True, no_trace=no_trace)
         if "exceptionDetails" in result:
@@ -272,75 +302,145 @@ class Browser:
             print("eval_js(%s): cannot interpret return value %s" % (code, result))
         return None
 
-    def call_js_func(self, func, *args):
+    def call_js_func(self, func: str, *args: Any) -> Optional[Any]:
+        """Call a JavaScript function
+
+        :param func: JavaScript function to call
+        :param args: arguments for the JavaScript function
+        """
         return self.eval_js("%s(%s)" % (func, ','.join(map(jsquote, args))))
 
-    def cookie(self, name):
+    def cookie(self, name: str):
+        """Retrieve a browser cookie by name
+
+        :param name: the name of the cookie
+        :type name: str
+        """
         cookies = self.cdp.invoke("Network.getCookies")
         for c in cookies["cookies"]:
             if c["name"] == name:
                 return c
         return None
 
-    def go(self, hash, host="localhost"):
+    def go(self, hash: str, host: str = "localhost"):
         # if not hash.startswith("/@"):
         #    hash = "/@" + host + hash
         self.call_js_func('ph_go', hash)
 
-    def mouse(self, selector, type, x=0, y=0, btn=0, ctrlKey=False, shiftKey=False, altKey=False, metaKey=False):
+    def mouse(self, selector: str, type: str, x: int = 0, y: int = 0, btn: int = 0, ctrlKey: bool = False, shiftKey: bool = False, altKey: bool = False, metaKey: bool = False):
+        """Simulate a browser mouse event
+
+        :param selector: the element to interact with
+        :param type: the mouse event to simulate, for example mouseenter, mouseleave, mousemove, click
+        :param x: the x coordinate
+        :param y: the y coordinate
+        :param btn: mouse button to click https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/buttons
+        :param crtlKey: press the ctrl key
+        :param shiftKey: press the shift key
+        :param altKey: press the alt key
+        :param metaKey: press the meta key
+        """
         self.wait_visible(selector)
         self.call_js_func('ph_mouse', selector, type, x, y, btn, ctrlKey, shiftKey, altKey, metaKey)
 
-    def click(self, selector):
+    def click(self, selector: str):
+        """Click on a ui element
+
+        :param selector: the selector to click on
+        """
         self.mouse(selector + ":not([disabled]):not([aria-disabled=true])", "click", 0, 0, 0)
 
-    def mousedown(self, selector):
+    def mousedown(self, selector: str):
         self.mouse(selector + ":not([disabled]):not([aria-disabled=true])", "mousedown", 0, 0, 0)
 
     def val(self, selector):
+        """Get the value attribute of a selector.
+
+        :param selector: the selector to get the value of
+        """
         self.wait_visible(selector)
         return self.call_js_func('ph_val', selector)
 
-    def set_val(self, selector, val):
+    def set_val(self, selector: str, val):
+        """Set the value attribute of a non disabled DOM element.
+
+        This also emits a change DOM change event.
+
+        :param selector: the selector to set the value of
+        :param val: the value to set
+        """
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_set_val', selector, val)
 
-    def text(self, selector):
+    def text(self, selector: str):
+        """Get an element's textContent value.
+
+        :param selector: the selector to get the value of
+        """
         self.wait_visible(selector)
         return self.call_js_func('ph_text', selector)
 
-    def attr(self, selector, attr):
+    def attr(self, selector: str, attr):
+        """Get the value of a given attribute of an element.
+
+        :param selector: the selector to get the attribute of
+        :param attr: the DOM element attribute
+        """
         self._wait_present(selector)
         return self.call_js_func('ph_attr', selector, attr)
 
     def set_attr(self, selector, attr, val):
+        """Set an attribute value of an element.
+
+        :param selector: the selector
+        :param attr: the element attribute
+        :param val: the value of the attribute
+        """
         self._wait_present(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_set_attr', selector, attr, val and 'true' or 'false')
 
-    def get_checked(self, selector):
+    def get_checked(self, selector: str):
+        """Get checked state of a given selector.
+
+        :param selector: the selector
+        :return: the checked state
+        """
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         return self.call_js_func('ph_get_checked', selector)
 
-    def set_checked(self, selector, val):
+    def set_checked(self, selector: str, val):
+        """Set checked state of a given selector.
+
+        :param selector: the selector
+        :param val: boolean value to enable or disable checkbox
+        """
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_set_checked', selector, val)
 
-    def focus(self, selector):
+    def focus(self, selector: str):
+        """Set focus on selected element.
+
+        :param selector: the selector
+        """
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_focus', selector)
 
-    def blur(self, selector):
+    def blur(self, selector: str):
+        """Remove keyboard focus from selected element.
+
+        :param selector: the selector
+        """
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         self.call_js_func('ph_blur', selector)
 
     # TODO: Unify them so we can have only one
-    def key_press(self, keys, modifiers=0, use_ord=False):
+    def key_press(self, keys: str, modifiers: int = 0, use_ord: bool = False):
         if self.cdp.browser.name == "chromium":
-            self.key_press_chromium(keys, modifiers, use_ord)
+            self._key_press_chromium(keys, modifiers, use_ord)
         else:
-            self.key_press_firefox(keys, modifiers, use_ord)
+            self._key_press_firefox(keys, modifiers, use_ord)
 
-    def key_press_chromium(self, keys, modifiers=0, use_ord=False):
+    def _key_press_chromium(self, keys, modifiers=0, use_ord=False):
         for key in keys:
             args = {"type": "keyDown", "modifiers": modifiers}
 
@@ -358,7 +458,7 @@ class Browser:
             args["type"] = "keyUp"
             self.cdp.invoke("Input.dispatchKeyEvent", **args)
 
-    def key_press_firefox(self, keys, modifiers=0, use_ord=False):
+    def _key_press_firefox(self, keys, modifiers=0, use_ord=False):
         # https://github.com/GoogleChrome/puppeteer/blob/master/lib/USKeyboardLayout.js
         keyMap = {
             8: "Backspace",   # Backspace key
@@ -380,14 +480,14 @@ class Browser:
             args["type"] = "keyUp"
             self.cdp.invoke("Input.dispatchKeyEvent", **args)
 
-    def select_from_dropdown(self, selector, value):
+    def select_from_dropdown(self, selector: str, value):
         self.wait_visible(selector + ':not([disabled]):not([aria-disabled=true])')
         text_selector = "{0} option[value='{1}']".format(selector, value)
         self._wait_present(text_selector)
         self.set_val(selector, value)
         self.wait_val(selector, value)
 
-    def select_PF4(self, selector, value):
+    def select_PF4(self, selector: str, value):
         self.click(f"{selector}:not([disabled]):not([aria-disabled=true])")
         select_entry = f"{selector} + ul button:contains('{value}')"
         self.click(select_entry)
@@ -410,7 +510,7 @@ class Browser:
         if value_check:
             self.wait_val(selector, val)
 
-    def set_file_autocomplete_val(self, group_identifier, location):
+    def set_file_autocomplete_val(self, group_identifier: str, location: str):
         file_item_selector_template = "{0} li button:contains({1})"
 
         path = ''
@@ -429,7 +529,7 @@ class Browser:
 
         self.wait_val("{0} > div input[type=text]".format(group_identifier), location)
 
-    def wait_timeout(self, timeout):
+    def wait_timeout(self, timeout: int):
         browser = self
 
         class WaitParamsRestorer():
@@ -445,7 +545,7 @@ class Browser:
         self.cdp.timeout = timeout
         return r
 
-    def wait(self, predicate):
+    def wait(self, predicate: Callable):
         for _ in range(self.cdp.timeout * self.timeout_factor * 5):
             val = predicate()
             if val:
@@ -453,7 +553,7 @@ class Browser:
             time.sleep(0.2)
         raise Error('timed out waiting for predicate to become true')
 
-    def wait_js_cond(self, cond, error_description="null"):
+    def wait_js_cond(self, cond: str, error_description: str = "null"):
         count = 0
         while True:
             count += 1
@@ -472,30 +572,30 @@ class Browser:
                 else:
                     raise e
 
-    def wait_js_func(self, func, *args):
+    def wait_js_func(self, func: str, *args: Any):
         self.wait_js_cond("%s(%s)" % (func, ','.join(map(jsquote, args))))
 
-    def is_present(self, selector):
+    def is_present(self, selector: str) -> Optional[bool]:
         return self.call_js_func('ph_is_present', selector)
 
-    def _wait_present(self, selector):
+    def _wait_present(self, selector: str):
         self.wait_js_func('ph_is_present', selector)
 
-    def wait_not_present(self, selector):
+    def wait_not_present(self, selector: str):
         self.wait_js_func('!ph_is_present', selector)
 
-    def is_visible(self, selector):
+    def is_visible(self, selector: str) -> Optional[bool]:
         return self.call_js_func('ph_is_visible', selector)
 
-    def wait_visible(self, selector):
+    def wait_visible(self, selector: str):
         self._wait_present(selector)
         self.wait_js_func('ph_is_visible', selector)
 
-    def wait_val(self, selector, val):
+    def wait_val(self, selector: str, val: str):
         self.wait_visible(selector)
         self.wait_js_func('ph_has_val', selector, val)
 
-    def wait_not_val(self, selector, val):
+    def wait_not_val(self, selector: str, val: str):
         self.wait_visible(selector)
         self.wait_js_func('!ph_has_val', selector, val)
 
@@ -515,51 +615,49 @@ class Browser:
         self._wait_present(selector)
         self.wait_js_func('!ph_has_attr', selector, attr, val)
 
-    def wait_not_visible(self, selector):
+    def wait_not_visible(self, selector: str):
         self.wait_js_func('!ph_is_visible', selector)
 
-    def wait_in_text(self, selector, text):
+    def wait_in_text(self, selector: str, text: str):
         self.wait_visible(selector)
         self.wait_js_cond("ph_in_text(%s,%s)" % (jsquote(selector), jsquote(text)),
                           error_description="() => 'actual text: ' + ph_text(%s)" % jsquote(selector))
 
-    def wait_not_in_text(self, selector, text):
+    def wait_not_in_text(self, selector: str, text: str):
         self.wait_visible(selector)
         self.wait_js_func('!ph_in_text', selector, text)
 
-    def wait_collected_text(self, selector, text):
+    def wait_collected_text(self, selector: str, text: str):
         self.wait_js_func('ph_collected_text_is', selector, text)
 
-    def wait_text(self, selector, text):
+    def wait_text(self, selector: str, text: str):
         self.wait_visible(selector)
         self.wait_js_cond("ph_text_is(%s,%s)" % (jsquote(selector), jsquote(text)),
                           error_description="() => 'actual text: ' + ph_text(%s)" % jsquote(selector))
 
-    def wait_text_not(self, selector, text):
+    def wait_text_not(self, selector: str, text: str):
         self.wait_visible(selector)
         self.wait_js_func('!ph_text_is', selector, text)
 
-    def wait_text_matches(self, selector, pattern):
+    def wait_text_matches(self, selector: str, pattern: str):
         self.wait_visible(selector)
         self.wait_js_func('ph_text_matches', selector, pattern)
 
-    def wait_popup(self, id):
+    def wait_popup(self, id: str):
         """Wait for a popup to open.
 
-        Arguments:
-          id: The 'id' attribute of the popup.
+        :param id: the 'id' attribute of the popup.
         """
         self.wait_visible('#' + id)
 
-    def wait_popdown(self, id):
+    def wait_popdown(self, id: str):
         """Wait for a popup to close.
 
-        Arguments:
-            id: The 'id' attribute of the popup.
+        :param id: the 'id' attribute of the popup.
         """
         self.wait_not_visible('#' + id)
 
-    def wait_language(self, lang):
+    def wait_language(self, lang: str):
         parts = lang.split("-")
         code_1 = parts[0]
         code_2 = parts[0]
@@ -567,7 +665,7 @@ class Browser:
             code_2 += "_" + parts[1].upper()
         self.wait_js_cond("cockpit.language == '%s' || cockpit.language == '%s'" % (code_1, code_2))
 
-    def dialog_complete(self, sel, button=".pf-m-primary", result="hide"):
+    def dialog_complete(self, sel: str, button: str = ".pf-m-primary", result: str = "hide"):
         self.click(sel + " " + button)
         self.wait_not_present(sel + " .dialog-wait-ct")
 
@@ -584,16 +682,19 @@ class Browser:
         else:
             raise Error("invalid dialog result argument: " + result)
 
-    def dialog_cancel(self, sel, button="button[data-dismiss='modal']"):
+    def dialog_cancel(self, sel: str, button: str = "button[data-dismiss='modal']"):
         self.click(sel + " " + button)
         self.wait_not_visible(sel)
 
-    def enter_page(self, path, host=None, reconnect=True):
+    def enter_page(self, path: str, host: Optional[str] = None, reconnect: bool = True):
         """Wait for a page to become current.
 
-        Arguments:
-
-            id: The identifier the page.  This is a string starting with "/"
+        :param path: The identifier the page.  This is a string starting with "/"
+        :type path: str
+        :param host: The host to connect too
+        :type host: str
+        :param reconnect: Try to reconnect
+        :type reconnect: bool
         """
         assert path.startswith("/")
         if host:
@@ -626,10 +727,10 @@ class Browser:
     def leave_page(self):
         self.switch_to_top()
 
-    def wait_action_btn(self, sel, entry):
+    def wait_action_btn(self, sel: str, entry: str):
         self.wait_text(sel + ' button:first-child', entry)
 
-    def click_action_btn(self, sel, entry=None):
+    def click_action_btn(self, sel: str, entry: Optional[str] = None):
         # We don't need to open the menu, it's enough to simulate a
         # click on the invisible button.
         if entry:
@@ -637,18 +738,21 @@ class Browser:
         else:
             self.click(sel + ' button:first-child')
 
-    def try_login(self, user=None, password=None, superuser=True, legacy_authorized=None):
+    def try_login(self, user: Optional[str] = None, password: Optional[str] = None, superuser: Optional[bool] = True, legacy_authorized: Optional[bool] = None):
         """Fills in the login dialog and clicks the button.
 
         This differs from login_and_go() by not expecting any particular result.
 
-        The "superuser" parameter determines whether the new session
-        will try to get Administrative Access.
-
-        The "legacy_authorized" parameter is or old versions of the
-        login dialog that still have the "[ ] Reuse my password for
-        magic things" checkbox.  Such a dialog is encountered when
-        testing against old bastion hosts, for example.
+        :param user: the username to login with
+        :type user: str
+        :param password: the password of the user
+        :type password: str
+        :param superuser: determines whether the new session will try to get Administrative Access (default true)
+        :type superuser: bool
+        :param legacy_authorized: old versions of the login dialog that still
+             have the "[ ] Reuse my password for magic things" checkbox.  Such a
+             dialog is encountered when testing against old bastion hosts, for
+             example.
         """
         if user is None:
             user = self.default_user
@@ -663,8 +767,22 @@ class Browser:
             self.eval_js('window.localStorage.setItem("superuser:%s", "%s");' % (user, "any" if superuser else "none"))
         self.click('#login-button')
 
-    def login_and_go(self, path=None, user=None, host=None, superuser=True, urlroot=None, tls=False, password=None,
-                     legacy_authorized=None):
+    def login_and_go(self, path: Optional[str] = None, user: Optional[str] = None, host: Optional[str] = None,
+                     superuser: bool = True, urlroot: Optional[str] = None, tls: bool = False, password: Optional[str] = None,
+                     legacy_authorized: Optional[bool] = None):
+        """Fills in the login dialog, clicks the button and navigates to the given path
+
+        :param user: the username to login with
+        :type user: str
+        :param password: the password of the user
+        :type password: str
+        :param superuser: determines whether the new session will try to get Administrative Access (default true)
+        :type superuser: bool
+        :param legacy_authorized: old versions of the login dialog that still
+             have the "[ ] Reuse my password for magic things" checkbox.  Such a
+             dialog is encountered when testing against old bastion hosts, for
+             example.
+        """
         href = path
         if not href:
             href = "/"
@@ -708,7 +826,8 @@ class Browser:
 
         self.machine.allow_restart_journal_messages()
 
-    def relogin(self, path=None, user=None, password=None, superuser=None, wait_remote_session_machine=None):
+    def relogin(self, path: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None,
+                superuser: Optional[bool] = None, wait_remote_session_machine: Optional[testvm.Machine] = None):
         self.logout()
         if wait_remote_session_machine:
             wait_remote_session_machine.execute("while pgrep -a cockpit-ssh; do sleep 1; done")
@@ -737,7 +856,7 @@ class Browser:
         else:
             self.click("#super-user-indicator button")
 
-    def check_superuser_indicator(self, expected):
+    def check_superuser_indicator(self, expected: str):
         if self.layout_is_mobile():
             self.open_session_menu()
             self.wait_text("#super-user-indicator-mobile", expected)
@@ -745,7 +864,7 @@ class Browser:
         else:
             self.wait_text("#super-user-indicator", expected)
 
-    def become_superuser(self, user=None, password=None):
+    def become_superuser(self, user: Optional[str] = None, password: Optional[str] = None):
         cur_frame = self.cdp.cur_frame
         self.switch_to_top()
 
@@ -769,32 +888,32 @@ class Browser:
 
         self.switch_to_frame(cur_frame)
 
-    def click_system_menu(self, path, enter=True):
-        '''Click on a "System" menu entry with given URL path
+    def click_system_menu(self, path: str, enter: bool = True):
+        """Click on a "System" menu entry with given URL path
 
         Enters the given target frame afterwards, unless enter=False is given
         (useful for remote hosts).
-        '''
+        """
         self.switch_to_top()
         self.click(f"#host-apps a[href='{path}']")
         if enter:
             # strip off parameters after hash
             self.enter_page(path.split('#')[0].rstrip('/'))
 
-    def ignore_ssl_certificate_errors(self, ignore):
+    def ignore_ssl_certificate_errors(self, ignore: bool):
         action = ignore and "continue" or "cancel"
         if opts.trace:
             print("-> Setting SSL certificate error policy to %s" % action)
         self.cdp.command(f"setSSLBadCertificateAction('{action}')")
 
-    def grant_permissions(self, *args):
+    def grant_permissions(self, *args: str):
         """Grant permissions to the browser"""
         # https://chromedevtools.github.io/devtools-protocol/tot/Browser/#method-grantPermissions
         self.cdp.invoke("Browser.grantPermissions",
                         origin="http://%s:%s" % (self.address, self.port),
                         permissions=args)
 
-    def snapshot(self, title, label=None):
+    def snapshot(self, title: str, label: Optional[str] = None):
         """Take a snapshot of the current screen and save it as a PNG and HTML.
 
         Arguments:
@@ -824,12 +943,12 @@ class Browser:
             attach(filename, move=True)
             print("Wrote HTML dump to " + filename)
 
-    def _set_window_size(self, width, height):
+    def _set_window_size(self, width: int, height: int):
         self.cdp.invoke("Emulation.setDeviceMetricsOverride",
                         width=width, height=height,
                         deviceScaleFactor=0, mobile=False)
 
-    def set_layout(self, name):
+    def set_layout(self, name: str):
         layout = [lo for lo in self.layouts if lo["name"] == name][0]
         if layout != self.current_layout:
             self.current_layout = layout
@@ -853,7 +972,11 @@ class Browser:
             if delta[0] != 0 or delta[1] != 0:
                 self._set_window_size(shell_size[0] + delta[0], shell_size[1] + delta[1])
 
-    def assert_pixels_in_current_layout(self, selector, key, ignore=[], scroll_into_view=None):
+    def assert_pixels_in_current_layout(self, selector: str, key: str,
+                                        ignore: List[str] = [],
+                                        scroll_into_view: Optional[str] = None,
+                                        wait_animations: bool = True,
+                                        wait_delay: float = 0.5):
         """Compare the given element with its reference in the current layout"""
 
         if not (Image and self.pixels_label):
@@ -883,8 +1006,9 @@ class Browser:
         # But we know that tooltips fade in within 300ms, so we just
         # wait half a second to and side-step all that complexity.
 
-        time.sleep(0.5)
-        self.wait_js_cond('ph_count_animations(%s) == 0' % jsquote(selector))
+        time.sleep(wait_delay)
+        if wait_animations:
+            self.wait_js_cond('ph_count_animations(%s) == 0' % jsquote(selector))
 
         rect = self.call_js_func('ph_element_clip', selector)
 
@@ -992,7 +1116,12 @@ class Browser:
                 print("Differences in pixel test " + base)
                 self.failed_pixel_tests += 1
 
-    def assert_pixels(self, selector, key, ignore=[], skip_layouts=[], scroll_into_view=None):
+    def assert_pixels(self, selector: str, key: str,
+                      ignore: List[str] = [],
+                      skip_layouts: List[str] = [],
+                      scroll_into_view: Optional[str] = None,
+                      wait_animations: bool = True,
+                      wait_delay: float = 0.5):
         """Compare the given element with its reference in all layouts"""
 
         if not (Image and self.pixels_label):
@@ -1003,7 +1132,9 @@ class Browser:
             if layout["name"] not in skip_layouts:
                 self.set_layout(layout["name"])
                 self.assert_pixels_in_current_layout(selector, key, ignore=ignore,
-                                                     scroll_into_view=scroll_into_view)
+                                                     scroll_into_view=scroll_into_view,
+                                                     wait_animations=wait_animations,
+                                                     wait_delay=wait_delay)
         self.set_layout(previous_layout)
 
     def assert_no_unused_pixel_test_references(self):
@@ -1025,7 +1156,7 @@ class Browser:
             return self.cdp.get_js_log()
         return []
 
-    def copy_js_log(self, title, label=None):
+    def copy_js_log(self, title: str, label: Optional[str] = None):
         """Copy the current javascript log"""
 
         logs = list(self.get_js_log())
@@ -1042,7 +1173,7 @@ class Browser:
     def write_coverage_data(self):
         if self.coverage_label and self.cdp and self.cdp.valid:
             coverage = self.cdp.invoke("Profiler.takePreciseCoverage")
-            write_lcov(BASE_DIR, coverage['result'], self.coverage_label)
+            write_lcov(coverage['result'], self.coverage_label)
 
     def assert_no_oops(self):
         if self.allow_oops:
@@ -1054,60 +1185,76 @@ class Browser:
                 assert not self.is_visible("#navbar-oops"), "Cockpit shows an Oops"
 
 
-class _DebugOutcome(unittest.case._Outcome):
-    '''Run debug actions after test methods
+class _DebugOutcome(unittest.case._Outcome):  # type: ignore
+    """Run debug actions after test methods
 
     This will do screenshots, HTML dumps, and sitting before cleanup handlers run.
-    '''
+    """
 
     def testPartExecutor(self, test_case, isTest=False):
-        # we want to do the debug actions after the test function got called (isTest==True), but before
-        # TestCase.run() calls tearDown(); thus remember whether we are after isTest and already ran
-        if isTest:
-            self.ran_debug = False
-        else:
-            if getattr(self, "ran_debug", None) is False:
-                self.ran_debug = True
-                if self.errors:
-                    (err_case, exc_info) = self.errors[-1]
-                    if exc_info and isinstance(test_case, MachineCase):
-                        assert err_case == test_case
-                        # strip off the two topmost frames for testPartExecutor and TestCase.run(); uninteresting and breaks naughties
-                        traceback.print_exception(exc_info[0], exc_info[1], exc_info[2].tb_next.tb_next)
-                        try:
-                            test_case.snapshot("FAIL")
-                            test_case.copy_js_log("FAIL")
-                            test_case.copy_journal("FAIL")
-                            test_case.copy_cores("FAIL")
-                        except (OSError, RuntimeError):
-                            # failures in these debug artifacts should not skip cleanup actions
-                            sys.stderr.write("Failed to generate debug artifact:\n")
-                            traceback.print_exc(file=sys.stderr)
+        def failureHandler(exc_info, python_311=False):
+            if python_311:
+                # exc_info is now a string
+                print(exc_info, file=sys.stderr)
+            else:
+                # strip off the two topmost frames for testPartExecutor and TestCase.run(); uninteresting and breaks naughties
+                traceback.print_exception(exc_info[0], exc_info[1], exc_info[2].tb_next.tb_next)
+            try:
+                test_case.snapshot("FAIL")
+                test_case.copy_js_log("FAIL")
+                test_case.copy_journal("FAIL")
+                test_case.copy_cores("FAIL")
+            except (OSError, RuntimeError):
+                # failures in these debug artifacts should not skip cleanup actions
+                sys.stderr.write("Failed to generate debug artifact:\n")
+                traceback.print_exc(file=sys.stderr)
 
-                        if opts.sit:
-                            sit(test_case.machines)
+            if opts.sit:
+                sit(test_case.machines)
 
-        return super().testPartExecutor(test_case, isTest)
+        superResult = super().testPartExecutor(test_case, isTest)
+        ran_debug = hasattr(test_case, "_ran_debug")
+
+        if ran_debug or not isinstance(test_case, MachineCase):
+            return superResult
+
+        # Python < 3.11 (Outcome class does not have a errors attribute anymore
+        # https://github.com/python/cpython/commit/664448d81f41c5fa971d8523a71b0f19e76cc136#diff-c6fe1ffe930def48a6adf1fa99b974737bac586fdacccacd1474e7b2f11370ebL79
+        if hasattr(self, 'errors'):
+            if self.errors and not isTest:
+                (err_case, exc_info) = self.errors[-1]
+                if exc_info:
+                    assert err_case == test_case
+                    setattr(test_case, "_ran_debug", True)
+                    failureHandler(exc_info, False)
+        elif self.result.errors or self.result.failures:
+            errors = [err for err in itertools.chain(self.result.errors, self.result.failures) if err[0] == test_case]
+            if errors:
+                (err_case, exc_info) = errors[-1]
+                setattr(test_case, "_ran_debug", True)
+                failureHandler(exc_info, True)
+
+        return superResult
 
 
-unittest.case._Outcome = _DebugOutcome
+unittest.case._Outcome = _DebugOutcome  # type: ignore
 
 
 class MachineCase(unittest.TestCase):
     image = testvm.DEFAULT_IMAGE
     libexecdir = None
     runner = None
-    machine = None
-    machines = {}
+    machine: testvm.Machine
+    machines = Dict[str, testvm.Machine]
     machine_class = None
-    browser = None
+    browser: Browser
     network = None
     journal_start = None
 
     # provision is a dictionary of dictionaries, one for each additional machine to be created, e.g.:
     # provision = { 'openshift' : { 'image': 'openshift', 'memory_mb': 1024 } }
     # These will be instantiated during setUp, and replaced with machine objects
-    provision = None
+    provision: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
 
     global_machine = None
 
@@ -1163,10 +1310,17 @@ class MachineCase(unittest.TestCase):
             machine = self.machine
         label = self.label() + "-" + machine.label
         pixels_label = None
-        with open(f'{TEST_DIR}/reference-image') as fp:
-            reference_image = fp.read().strip()
-        if machine.image == reference_image and os.environ.get("TEST_BROWSER", "chromium") == "chromium" and not self.is_devel_build():
-            pixels_label = self.label()
+        if os.environ.get("TEST_BROWSER", "chromium") == "chromium" and not self.is_devel_build():
+            try:
+                with open(f'{TEST_DIR}/reference-image') as fp:
+                    reference_image = fp.read().strip()
+            except FileNotFoundError:
+                # no "reference-image" file available; this most likely means that
+                # there are no pixel tests to execute
+                pass
+            else:
+                if machine.image == reference_image:
+                    pixels_label = self.label()
         browser = Browser(machine.web_address,
                           label=label, pixels_label=pixels_label, coverage_label=self.label() if coverage else None,
                           port=machine.web_port, machine=self)
@@ -1176,7 +1330,17 @@ class MachineCase(unittest.TestCase):
     def checkSuccess(self):
         # errors is a list of (method, exception) calls (usually multiple
         # per method); None exception means success
-        return not any(e[1] for e in self._outcome.errors)
+        errors = []
+        if hasattr(self._outcome, 'errors'):
+            # Python 3.4 - 3.10  (These two methods have no side effects)
+            result = self.defaultTestResult()
+            errors = result.errors
+            self._feedErrorsToResult(result, self._outcome.errors)
+        else:
+            # Python 3.11+ now records errors and failures seperate
+            errors = self._outcome.result.errors + self._outcome.result.failures
+
+        return not any(e[1] for e in errors)
 
     def is_nondestructive(self):
         test_method = getattr(self.__class__, self._testMethodName)
@@ -1234,7 +1398,6 @@ class MachineCase(unittest.TestCase):
         if opts.address and self.provision is not None:
             raise unittest.SkipTest("Cannot provision multiple machines if a specific machine address is specified")
 
-        self.browser = None
         self.machines = {}
         provision = self.provision or {'machine1': {}}
         self.tmpdir = tempfile.mkdtemp()
@@ -1246,7 +1409,7 @@ class MachineCase(unittest.TestCase):
                 raise unittest.SkipTest("Cannot provision machines if test is marked as nondestructive")
             self.machine = self.machines['machine1'] = MachineCase.get_global_machine()
         else:
-            self.machine = None
+            first_machine = True
             # First create all machines, wait for them later
             for key in sorted(provision.keys()):
                 options = provision[key].copy()
@@ -1260,7 +1423,8 @@ class MachineCase(unittest.TestCase):
                     options['restrict'] = restrict
                 machine = self.new_machine(**options)
                 self.machines[key] = machine
-                if not self.machine:
+                if first_machine:
+                    first_machine = False
                     self.machine = machine
                 if opts.trace:
                     print("Starting {0} {1}".format(key, machine.label))
@@ -1284,26 +1448,25 @@ class MachineCase(unittest.TestCase):
             if dhcp:
                 machine.dhcp_server()
 
-        if self.machine:
-            self.journal_start = self.machine.journal_cursor()
-            self.browser = self.new_browser(coverage=opts.coverage)
-            # fail tests on criticals
-            self.machine.write("/etc/cockpit/cockpit.conf", "[Log]\nFatal = criticals\n")
-            if self.is_nondestructive():
-                self.nonDestructiveSetup()
+        self.journal_start = self.machine.journal_cursor()
+        self.browser: Browser = self.new_browser(coverage=opts.coverage)
+        # fail tests on criticals
+        self.machine.write("/etc/cockpit/cockpit.conf", "[Log]\nFatal = criticals\n")
+        if self.is_nondestructive():
+            self.nonDestructiveSetup()
 
-            # Pages with debug enabled are huge and loading/executing them is heavy for browsers
-            # To make it easier for browsers and thus make tests quicker, disable packagekit and systemd preloads
-            if self.is_devel_build():
-                self.disable_preload("packagekit", "systemd")
+        # Pages with debug enabled are huge and loading/executing them is heavy for browsers
+        # To make it easier for browsers and thus make tests quicker, disable packagekit and systemd preloads
+        if self.is_devel_build():
+            self.disable_preload("packagekit", "systemd")
 
-            if self.machine.image.startswith('debian') or self.machine.image.startswith('ubuntu') or self.machine.image == 'arch':
-                self.libexecdir = '/usr/lib/cockpit'
-            else:
-                self.libexecdir = '/usr/libexec'
+        if self.machine.image.startswith('debian') or self.machine.image.startswith('ubuntu') or self.machine.image == 'arch':
+            self.libexecdir = '/usr/lib/cockpit'
+        else:
+            self.libexecdir = '/usr/libexec'
 
     def nonDestructiveSetup(self):
-        '''generic setUp/tearDown for @nondestructive tests'''
+        """generic setUp/tearDown for @nondestructive tests"""
 
         m = self.machine
 
@@ -1726,7 +1889,7 @@ class MachineCase(unittest.TestCase):
                     print("Journal extracted to %s" % (log))
                     attach(log, move=True)
 
-    def copy_cores(self, title, label=None):
+    def copy_cores(self, title: str, label: Optional[str] = None):
         if self.allow_core_dumps:
             return
         for name, m in self.machines.items():
@@ -1746,12 +1909,12 @@ class MachineCase(unittest.TestCase):
                         # attach(dest, move=True)
 
     def settle_cpu(self):
-        '''Wait until CPU usage in the VM settles down
+        """Wait until CPU usage in the VM settles down
 
         Wait until the process with the highest CPU usage drops below 20%
         usage. Wait for up to a minute, then return. There is no error if the
         CPU stays busy, as usually a test then should just try to run anyway.
-        '''
+        """
         for retry in range(20):
             # get the CPU percentage of the most busy process
             busy_proc = self.machine.execute("ps --no-headers -eo pcpu,pid,args | sort -k 1 -n -r | head -n1")
@@ -1759,13 +1922,13 @@ class MachineCase(unittest.TestCase):
                 break
             time.sleep(3)
 
-    def sed_file(self, expr, path, apply_change_action=None):
-        '''sed a file on primary machine
+    def sed_file(self, expr: str, path: str, apply_change_action: Optional[str] = None):
+        """sed a file on primary machine
 
         This is safe for @nondestructive tests, the file will be restored during cleanup.
 
         The optional apply_change_action will be run both after sedding and after restoring the file.
-        '''
+        """
         m = self.machine
         m.execute("sed -i.cockpittest '{0}' {1}".format(expr, path))
         if apply_change_action:
@@ -1776,8 +1939,8 @@ class MachineCase(unittest.TestCase):
                 self.addCleanup(m.execute, apply_change_action)
             self.addCleanup(m.execute, "mv {0}.cockpittest {0}".format(path))
 
-    def restore_dir(self, path, post_restore_action=None, reboot_safe=False):
-        '''Backup/restore a directory for a nondestructive test
+    def restore_dir(self, path: str, post_restore_action: Optional[str] = None, reboot_safe: bool = False):
+        """Backup/restore a directory for a nondestructive test
 
         This takes care to not ever touch the original content on disk, but uses transient overlays.
         As this uses a bind mount, it does not work for files that get changed atomically (with mv);
@@ -1787,7 +1950,7 @@ class MachineCase(unittest.TestCase):
 
         If the directory needs to survive reboot, `reboot_safe=True` needs to be specified; then this
         will just backup/restore the directory instead of bind-mounting, which is less robust.
-        '''
+        """
         if not self.is_nondestructive() and not self.machine.ostree_image:
             return  # skip for efficiency reasons
 
@@ -1812,13 +1975,13 @@ class MachineCase(unittest.TestCase):
         else:
             self.addCleanup(self.machine.execute, "umount -lf " + path)
 
-    def restore_file(self, path, post_restore_action=None):
-        '''Backup/restore a file for a nondestructive test
+    def restore_file(self, path: str, post_restore_action: Optional[str] = None):
+        """Backup/restore a file for a nondestructive test
 
         This is less robust than restore_dir(), but works for files that need to get changed atomically.
 
         If path does not currently exist, it will be removed again on cleanup.
-        '''
+        """
         if not self.is_nondestructive():
             return  # skip for efficiency reasons
 
@@ -1833,15 +1996,16 @@ class MachineCase(unittest.TestCase):
         else:
             self.addCleanup(self.machine.execute, "rm -rf %s" % path)
 
-    def write_file(self, path, content, append=False, owner=None, perm=None, post_restore_action=None):
-        '''Write a file on primary machine
+    def write_file(self, path: str, content: str, append: bool = False, owner: Optional[str] = None, perm: Optional[str] = None,
+                   post_restore_action: Optional[str] = None):
+        """Write a file on primary machine
 
         This is safe for @nondestructive tests, the file will be removed during cleanup.
 
         If @append is True, append to existing file instead of replacing it.
         @owner is the desired file owner as chown shell string (e.g. "admin:nogroup")
         @perm is the desired file permission as chmod shell string (e.g. "0600")
-        '''
+        """
         m = self.machine
         self.restore_file(path, post_restore_action=post_restore_action)
         dirname = os.path.dirname(path)
@@ -1849,18 +2013,18 @@ class MachineCase(unittest.TestCase):
         m.write(path, content, append=append, owner=owner, perm=perm)
 
 
-def jsquote(str):
-    return json.dumps(str)
+def jsquote(js: str) -> str:
+    return json.dumps(js)
 
 
-def skipBrowser(reason, *args):
+def skipBrowser(reason: str, *args: str):
     browser = os.environ.get("TEST_BROWSER", "chromium")
     if browser in args:
         return unittest.skip("{0}: {1}".format(browser, reason))
     return generic_metadata_setter("_testlib__skipBrowser", args)
 
 
-def skipImage(reason, *args):
+def skipImage(reason: str, *args: str):
     if testvm.DEFAULT_IMAGE in args:
         return unittest.skip("{0}: {1}".format(testvm.DEFAULT_IMAGE, reason))
     return generic_metadata_setter("_testlib__skipImage", args)
@@ -1873,11 +2037,11 @@ def skipMobile():
 
 
 def skipDistroPackage():
-    '''For tests which apply to BaseOS packages
+    """For tests which apply to BaseOS packages
 
     With that, tests can evolve with latest code, without constantly breaking them when
     running against older package versions in the -distropkg tests.
-    '''
+    """
     if 'distropkg' in testvm.DEFAULT_IMAGE:
         return unittest.skip(f"{testvm.DEFAULT_IMAGE}: Do not test BaseOS packages")
     return lambda testEntity: set_obj_attribute(testEntity, "_testlib__skipImage", (testvm.DEFAULT_IMAGE, ))
@@ -2145,25 +2309,20 @@ class Error(Exception):
         return self.msg
 
 
-def wait(func, msg=None, delay=1, tries=60):
-    """
-    Wait for FUNC to return something truthy, and return that.
+def wait(func: Callable, msg: Optional[str] = None, delay: int = 1, tries: int = 60):
+    """Wait for FUNC to return something truthy, and return that.
 
     FUNC is called repeatedly until it returns a true value or until a
     timeout occurs.  In the latter case, a exception is raised that
     describes the situation.  The exception is either the last one
     thrown by FUNC, or includes MSG, or a default message.
 
-    Arguments:
-      func: The function to call.
-      msg: A error message to use when the timeout occurs.  Defaults
-        to a generic message.
-      delay: How long to wait between calls to FUNC, in seconds.
-        Defaults to 1.
-      tries: How often to call FUNC.  Defaults to 60.
-
-    Raises:
-      Error: When a timeout occurs.
+    :param func: The function to call
+    :param msg: A error message to use when the timeout occurs. Defaults
+                to a generic message.
+    :param delay: How long to wait between calls to FUNC, in seconds. (default 1)
+    :param tries: How often to call FUNC.  (defaults 60)
+    :raises Error: When a timeout occurs.
     """
 
     t = 0

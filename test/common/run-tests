@@ -12,14 +12,17 @@ import socket
 import tempfile
 import binascii
 import logging
+import functools
 
 import importlib.machinery
 import importlib.util
 
 import parent
 parent.ensure_bots()  # NOQA: testvm lives in bots/
-import testlib
-import testvm
+import testlib   # NOQA: imported through parent.py
+import testvm   # NOQA: imported through parent.py
+
+from lcov import prepare_for_code_coverage, create_coverage_report  # NOQA: E402
 
 sys.dont_write_bytecode = True
 os.environ['PYTHONUNBUFFERED'] = '1'
@@ -35,7 +38,7 @@ def flush_stdout():
 
 
 class Test:
-    def __init__(self, test_id, command, timeout, nondestructive, retry_when_affected):
+    def __init__(self, test_id, command, timeout, nondestructive, retry_when_affected, cost=1):
         self.process = None
         self.retries = 0
         self.test_id = test_id
@@ -44,6 +47,7 @@ class Test:
         self.nondestructive = nondestructive
         self.machine_id = None
         self.retry_when_affected = retry_when_affected
+        self.cost = cost
         self.returncode = None
 
     def assign_machine(self, machine_id, ssh_address, web_address):
@@ -141,15 +145,12 @@ class Test:
     # internal methods
 
     def __str__(self):
-        return "{0} {1} {2}{3}".format(
-            self.test_id,
-            self.command[0],
-            self.command[-1],
-            " [ND@{0}]".format(self.machine_id) if self.nondestructive else "",
-        )
+        cost = "" if self.cost == 1 else f" ${self.cost}"
+        nd = f" [ND@{self.machine_id}]" if self.nondestructive else ""
+        return f"{self.test_id} {self.command[0]} {self.command[-1]}{cost}{nd}"
 
     def _print_test(self, print_tap=True, retry_reason="", skip_reason=""):
-        for line in self.output.strip().splitlines(keepends=True):
+        def write_line(line):
             while line:
                 try:
                     sys.stdout.buffer.write(line)
@@ -157,6 +158,14 @@ class Test:
                 except BlockingIOError as e:
                     line = line[e.characters_written:]
                     time.sleep(0.1)
+
+        # be quiet in TAP mode for successful tests
+        lines = self.output.strip().splitlines(keepends=True)
+        if print_tap and self.returncode == 0 and len(lines) > 0:
+            write_line(lines[-1])
+        else:
+            for line in lines:
+                write_line(line)
 
         if retry_reason:
             retry_reason = " " + retry_reason
@@ -308,7 +317,12 @@ def detect_tests(test_files, image, opts):
                     continue
                 nd = getattr(test_method, "_testlib__non_destructive", False)
                 rwa = getattr(test_method, "_testlib__retry_when_affected", True)
-                test = Test(test_id, build_command(filename, test_str, opts), test_timeout, nd, rwa)
+                if getattr(test.__class__, "provision", None):
+                    # each additionally provisioned VM costs parallel test capacity
+                    cost = len(test.__class__.provision)
+                else:
+                    cost = 1
+                test = Test(test_id, build_command(filename, test_str, opts), test_timeout, nd, rwa, cost=cost)
                 if nd:
                     serial_tests.append(test)
                 else:
@@ -332,35 +346,12 @@ def list_tests(opts):
         print(n)
 
 
-def create_coverage_report():
-    base_dir = os.path.realpath(f'{__file__}/../../..')
-    output = os.environ.get("TEST_ATTACHMENTS", base_dir)
-    lcov_files = glob.glob(f"{base_dir}/lcov/*.info.gz")
-    try:
-        title = os.path.basename(subprocess.check_output(["git", "remote", "get-url", "origin"]))
-    except subprocess.CalledProcessError:
-        title = "?"
-    if len(lcov_files) > 0:
-        try:
-            subprocess.check_call(["genhtml", "--no-function-coverage",
-                                   "--title", title,
-                                   "--output-dir", f"{output}/Coverage"] + lcov_files)
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to create coverage report: {e}")
-
-
 def run(opts, image):
     fail_count = 0
     start_time = time.time()
 
     if opts.coverage:
-        # This gives us a convenient link at the top of the logs, see link-patterns.json
-        print("Code coverage report in Coverage/index.html")
-        try:
-            with open("github-pr.diff", "w") as f:
-                subprocess.check_call(["git", "diff", "main"], stdout=f)
-        except subprocess.CalledProcessError:
-            pass
+        prepare_for_code_coverage()
 
     test_files = glob.glob(os.path.join(opts.test_dir, opts.test_glob))
     changed_tests = get_affected_tests(opts.test_dir, opts.base, test_files)
@@ -447,10 +438,13 @@ def run(opts, image):
 
                     made_progress = True
 
-        # fill the remaining available job slots with parallel tests
-        while parallel_tests and len(running_tests) < opts.jobs:
+        def running_cost():
+            return functools.reduce(lambda cost, test: cost + test.cost, running_tests, 0)
+
+        # fill the remaining available job slots with parallel tests; run tests with a cost higher than #jobs by themselves
+        while parallel_tests and (running_cost() + parallel_tests[0].cost <= opts.jobs or len(running_tests) == 0):
             test = parallel_tests.pop(0)
-            logging.debug(f"{len(running_tests)} running tests, starting next parallel test {test}")
+            logging.debug(f"{len(running_tests)} running tests with total cost {running_cost()}, starting next parallel test {test}")
             test.start()
             running_tests.append(test)
             made_progress = True

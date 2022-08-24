@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -22,8 +22,9 @@ import subprocess
 import os
 import re
 
-import parent
-from testlib import *
+import parent  # noqa: F401
+from testlib import (MachineCase, TEST_DIR, no_retry_when_changed, nondestructive,
+                     skipDistroPackage, test_main)
 
 dirname = os.path.dirname(__file__)
 run_tests = os.path.join(TEST_DIR, "common", "run-tests")
@@ -196,7 +197,7 @@ class TestRunTest(MachineCase):
 
         # create affected test for systemd changes
         affected_testfile = os.path.join(VERIFY_DIR, "check-system-testlib")
-        writeFile(affected_testfile, """#!/usr/bin/python3
+        writeFile(affected_testfile, """#!/usr/bin/env python3
 import unittest
 class TestSystemd(unittest.TestCase):
     def testBasic(self):

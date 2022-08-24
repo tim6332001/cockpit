@@ -42,7 +42,7 @@ For running integration tests, the following dependencies are required:
 
     $ sudo dnf install curl expect xz rpm-build chromium-headless \
         libvirt-daemon-driver-storage-core libvirt-daemon-driver-qemu libvirt-client python3-libvirt \
-        python3-pyflakes python3-pycodestyle python3-pyyaml
+        python3-flake8 python3-pyyaml
 
 Creating VM images locally (not necessary for running tests) needs the
 following:
@@ -104,13 +104,13 @@ There are also static code and syntax checks which you should run often:
 It is highly recommended to set up a git pre-push hook, to avoid pushing PRs
 that will fail on trivial errors:
 
-    $ ln -s ../../test/git-hook-pre-push .git/hooks/pre-push
+    $ ln -s ../../tools/git-hook-pre-push .git/hooks/pre-push
 
 This calls `test/static-code` for each commit you're trying to push.
 
 You can also set up a post-commit hook to do the same, after each commit:
 
-    $ ln -s ../../test/git-hook-post-commit .git/hooks/post-commit
+    $ ln -s ../../tools/git-hook-post-commit .git/hooks/post-commit
 
 We also have a hook to ameliorate one of the more annoying drawbacks of using
 git submodules:
@@ -121,6 +121,23 @@ git submodules:
 
 Refer to the [testing README](test/README.md) for details on running the Cockpit
 integration tests locally.
+
+## Testing the Python bridge
+
+There is currently an experimental replacement for `cockpit-bridge` being
+written in Python.  It lives in `src/cockpit` with most of its rules in
+`src/Makefile.am`.  This directory was chosen because it matches the standard
+so-called "src layout" convention for Python packages, where each package
+(`cockpit`) is a subdirectory of the `src` directory.
+
+You can run a subset of the unit tests against this experimental code by typing
+`make pycheck`.  Note that this needs to be done against a git checkout, as the
+Python files are not currently included in tarball releases.
+
+It's also possible to manually build the bridge with `make cockpit-bridge.pyz`.
+You can copy the created file into the `$PATH` as `cockpit-bridge`.  It should
+then be possible to get a limited Cockpit session running (for example, by
+specifying `localhost` to Cockpit Client).
 
 ## Running eslint
 
@@ -144,6 +161,29 @@ speeds up the build and avoids build failures due to e. g.  ill-formatted
 comments or unused identifiers:
 
     $ make ESLINT=0
+
+## Running stylelint
+
+Cockpit uses [Stylelint](https://stylelint.io/) to automatically check CSS code
+style in `.css` and `scss` files.
+
+The linter is executed within every build as a webpack preloader.
+
+For developer convenience, the Stylelint can be started explicitly by:
+
+    $ npm run stylelint
+
+Violations of some rules can be fixed automatically by:
+
+    $ npm run stylelint:fix
+
+Rules configuration can be found in the `.stylelintrc.json` file.
+
+During fast iterative development, you can also choose to not run stylelint.
+This speeds up the build and avoids build failures due to e. g. ill-formatted
+css or other issues:
+
+    $ make STYLELINT=0
 
 ## Working on your local machine: Cockpit's session pages
 

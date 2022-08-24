@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -29,10 +29,15 @@ import sys
 import tempfile
 import textwrap
 
-gi.require_version("Gtk", "3.0")  # NOQA
-gi.require_version("WebKit2", "4.0")  # NOQA
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gio, Gtk  # NOQA
 
-from gi.repository import GLib, Gio, Gtk, WebKit2
+try:
+    gi.require_version("WebKit2", "4.1")
+    from gi.repository import WebKit2
+except (ValueError, ImportError):
+    gi.require_version("WebKit2", "4.0")
+    from gi.repository import WebKit2
 
 try:
     gi.require_version("Handy", "1")
@@ -190,7 +195,7 @@ class CockpitClient(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
 
-        if Handy:
+        if Handy and hasattr(Handy, 'StyleManager'):
             Handy.StyleManager.get_default().set_color_scheme(Handy.ColorScheme.PREFER_LIGHT)
 
         # .add_action_entries() binding is broken for GApplication

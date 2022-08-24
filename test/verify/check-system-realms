@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -24,10 +24,10 @@ import hmac
 import hashlib
 import base64
 
-import parent
+import parent  # noqa: F401
 
 import packagelib
-from testlib import *
+from testlib import Error, MachineCase, no_retry_when_changed, nondestructive, skipBrowser, skipDistroPackage, skipImage, test_main, wait
 
 
 WAIT_KRB_SCRIPT = """
@@ -497,7 +497,7 @@ class TestRealms(MachineCase):
         self.allow_journal_messages("couldn't get all properties of org.freedesktop.realmd.Service.*org.freedesktop.DBus.Error.NoReply: Remote peer disconnected")
 
 
-@skipImage("freeipa not currently available", "debian-stable", "arch")
+@skipImage("freeipa not currently available", "debian-stable", "debian-testing", "arch")
 @skipDistroPackage()
 @no_retry_when_changed
 class TestIPA(TestRealms, CommonTests):
@@ -566,7 +566,7 @@ class TestIPA(TestRealms, CommonTests):
         self.assertIn("/etc/cockpit/ws-certs.d/10-ipa.cert",
                       m.execute(f"{self.libexecdir}/cockpit-certificate-ensure --check"))
         # correct permissions
-        self.assertEqual("root:cockpit-ws/640", m.execute("stat --printf '%U:%G/%a' /etc/cockpit/ws-certs.d/10-ipa.key"))
+        self.assertEqual("root:root/640", m.execute("stat --printf '%U:%G/%a' /etc/cockpit/ws-certs.d/10-ipa.key"))
         # cert is being tracked
         out = m.execute("ipa-getcert list")
         self.assertIn("MONITORING", out)
@@ -997,7 +997,7 @@ sed -i '/^sudoers:/ s/files sss/sss files/' /etc/nsswitch.conf
 
 
 @skipImage("No realmd available", "fedora-coreos", "arch")
-@skipImage("freeipa not currently available", "debian-stable", "arch")
+@skipImage("freeipa not currently available", "debian-stable", "debian-testing", "arch")
 @skipDistroPackage()
 @no_retry_when_changed
 class TestKerberos(MachineCase):

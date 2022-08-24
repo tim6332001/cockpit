@@ -248,6 +248,7 @@ const CompressionPlugin = require("compression-webpack-plugin");
 const TerserJSPlugin = require('terser-webpack-plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
 const ESLintPlugin = require('eslint-webpack-plugin');
+const StylelintPlugin = require('stylelint-webpack-plugin');
 const CockpitPoPlugin = require("./pkg/lib/cockpit-po-plugin");
 
 /* These can be overridden, typically from the Makefile.am */
@@ -262,6 +263,9 @@ const production = process.env.NODE_ENV === 'production';
 
 /* Default to disable eslint for faster production builds */
 const eslint = process.env.ESLINT ? (process.env.ESLINT !== '0') : !production;
+
+/* Default to disable csslint for faster production builds */
+const stylelint = process.env.STYLELINT ? (process.env.STYLELINT !== '0') : !production;
 
 /*
  * Note that we're avoiding the use of path.join as webpack and nodejs
@@ -307,13 +311,6 @@ if (section) {
 }
 info.files = files;
 
-// base1 fonts for cockpit-bridge package
-const base1_fonts = [
-    { from: path.resolve(nodedir, 'patternfly/dist/fonts/fontawesome-webfont.woff'), to: 'base1/fonts/fontawesome.woff' },
-    { from: path.resolve(nodedir, 'patternfly/dist/fonts/glyphicons-halflings-regular.woff'), to: 'base1/fonts/glyphicons.woff' },
-    { from: path.resolve(nodedir, 'patternfly/dist/fonts/PatternFlyIcons-webfont.woff'), to: 'base1/fonts/patternfly.woff' },
-];
-
 // main font for all our pages
 const redhat_fonts = [
     "Text-Bold", "Text-BoldItalic", "Text-Italic", "Text-Medium", "Text-MediumItalic", "Text-Regular",
@@ -326,14 +323,6 @@ const redhat_fonts = [
         to: 'static/fonts/'
     };
 });
-
-// deprecated OpenSans static font for cockpit-ws package (still necessary for RHEL 7 remote hosts)
-const opensans_fonts = [
-    "Bold", "BoldItalic", "ExtraBold", "ExtraBoldItalic", "Italic", "Light",
-    "LightItalic", "Regular", "Semibold", "SemiboldItalic"
-].map(name => (
-    { from: path.resolve(nodedir, 'patternfly/dist/fonts/OpenSans-' + name + '-webfont.woff'), to: 'static/fonts/' }
-));
 
 function get_translation_reference_patterns () {
     // shell needs all manifest translations for search
@@ -371,13 +360,14 @@ if (eslint) {
     plugins.push(new ESLintPlugin({ extensions: ["js", "jsx"] }));
 }
 
-if (section.startsWith('base1'))
-    plugins.push(new Copy({ patterns: base1_fonts }));
-
-if (section.startsWith('static')) {
-    plugins.push(new Copy({ patterns: redhat_fonts }));
-    plugins.push(new Copy({ patterns: opensans_fonts }));
+if (stylelint) {
+    plugins.push(new StylelintPlugin({
+        context: "pkg/" + section,
+    }));
 }
+
+if (section.startsWith('static'))
+    plugins.push(new Copy({ patterns: redhat_fonts }));
 
 /* Fill in the tests properly */
 info.tests.forEach(test => {
@@ -456,64 +446,6 @@ module.exports = {
                 // also exclude unit tests, we don't need it for them, just a waste and makes failures harder to read
                 exclude: /\/node_modules|\/test-/,
                 use: "babel-loader"
-            },
-            /* HACK: remove unwanted fonts from PatternFly's css */
-            {
-                test: /patternfly-cockpit.scss$/,
-                use: [
-                    MiniCssExtractPlugin.loader,
-                    {
-                        loader: 'css-loader',
-                        options: {
-                            sourceMap: !production,
-                            url: false,
-                        },
-                    },
-                    {
-                        loader: 'string-replace-loader',
-                        options: {
-                            multiple: [
-                                {
-                                    search: /src: ?url[(]"patternfly-icons-fake-path\/glyphicons-halflings-regular[^}]*/g,
-                                    replace: 'font-display:block; src:url("../base1/fonts/glyphicons.woff") format("woff");',
-                                },
-                                {
-                                    search: /src: ?url[(]"patternfly-fonts-fake-path\/PatternFlyIcons[^}]*/g,
-                                    replace: 'src:url("../base1/fonts/patternfly.woff") format("woff");',
-                                },
-                                {
-                                    search: /src: ?url[(]"patternfly-fonts-fake-path\/fontawesome[^}]*/,
-                                    replace: 'font-display:block; src:url("../base1/fonts/fontawesome.woff?v=4.2.0") format("woff");',
-                                },
-                                {
-                                    search: /src: ?url\("patternfly-icons-fake-path\/pficon[^}]*/g,
-                                    replace: 'src:url("../base1/fonts/patternfly.woff") format("woff");',
-                                },
-                                {
-                                    search: /@font-face[^}]*patternfly-fonts-fake-path[^}]*}/g,
-                                    replace: '',
-                                },
-                            ]
-                        },
-                    },
-                    {
-                        loader: 'sass-loader',
-                        options: {
-                            sourceMap: !production,
-                            sassOptions: {
-                                quietDeps: true,
-                                outputStyle: production ? 'compressed' : undefined,
-                                includePaths: [
-                                    // Teach webpack to resolve these references in order to build PF3 scss
-                                    path.resolve(nodedir),
-                                    path.resolve(nodedir, 'font-awesome-sass', 'assets', 'stylesheets'),
-                                    path.resolve(nodedir, 'patternfly', 'dist', 'sass'),
-                                    path.resolve(nodedir, 'bootstrap-sass', 'assets', 'stylesheets'),
-                                ],
-                            },
-                        },
-                    },
-                ]
             },
             {
                 test: /patternfly-4-cockpit.scss$/,

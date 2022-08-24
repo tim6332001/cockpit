@@ -38,7 +38,6 @@ export class Service extends React.Component {
         super(props);
 
         this.state = {
-            error: undefined,
             /* The initial load of the Services page will not call GetAll for units Properties
              * since ListUnits API call already has provided us with a subset of the Properties.
              * As a result, properties like the 'Requires' are not present in the state at this point.
@@ -62,7 +61,9 @@ export class Service extends React.Component {
                                 owner={this.props.owner}
                                 permitted={superuser.allowed}
                                 loadingUnits={this.props.loadingUnits}
-                                isValid={this.props.unitIsValid} />;
+                                isValid={this.props.unitIsValid}
+                                isPinned={this.props.isPinned}
+        />;
 
         const cur_unit_id = this.props.unit.Id;
         const match = [

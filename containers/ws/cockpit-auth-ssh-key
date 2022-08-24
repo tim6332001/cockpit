@@ -15,16 +15,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
-
-import os
-import sys
-import json
-import time
-import base64
-import subprocess
-
-COCKPIT_SSH_COMMAND = "/usr/libexec/cockpit-ssh"
-
+#
 # This command is meant to be used as an authentication command launched
 # by cockpit-ws. It asks for authentication from cockpit-ws and expects
 # to receive a basic auth header in response. If COCKPIT_SSH_KEY_PATH is set
@@ -35,10 +26,26 @@ COCKPIT_SSH_COMMAND = "/usr/libexec/cockpit-ssh"
 # cockpit protocol
 # (https://github.com/cockpit-project/cockpit/blob/main/doc/protocol.md)
 
+import base64
+import json
+import os
+import subprocess
+import sys
+import time
+
+COCKPIT_SSH_COMMAND = "/usr/libexec/cockpit-ssh"
+
 
 def usage():
-    sys.stderr.write("usage {} [user@]host[:port]\n".format(sys.argv[0]))
+    print("usage", sys.argv[0], "[user@]host[:port]", file=sys.stderr)
     sys.exit(os.EX_USAGE)
+
+
+def send_frame(content):
+    data = json.dumps(content).encode('utf-8')
+    os.write(1, str(len(data) + 1).encode('utf-8'))
+    os.write(1, b"\n\n")
+    os.write(1, data)
 
 
 def send_auth_command(challenge, response):
@@ -47,14 +54,12 @@ def send_auth_command(challenge, response):
     }
 
     if challenge:
-        cmd["cookie"] = "session{}{}".format(os.getpid(), time.time())
+        cmd["cookie"] = f"session{os.getpid()}{time.time()}"
         cmd["challenge"] = challenge
     if response:
         cmd["response"] = response
 
-    text = json.dumps(cmd).encode('utf-8')
-    os.write(1, "{}\n\n".format(len(text) + 1).encode('utf-8'))
-    os.write(1, text)
+    send_frame(cmd)
 
 
 def send_problem_init(problem, message, auth_methods):
@@ -69,9 +74,7 @@ def send_problem_init(problem, message, auth_methods):
     if auth_methods:
         cmd["auth-method-results"] = auth_methods
 
-    text = json.dumps(cmd).encode('utf-8')
-    os.write(1, "{}\n\n".format(len(text) + 1).encode('utf-8'))
-    os.write(1, text)
+    send_frame(cmd)
 
 
 def read_size(fd):
@@ -100,13 +103,13 @@ def read_size(fd):
 def read_frame(fd):
     size = read_size(fd)
 
-    data = ""
+    data = b""
     while size > 0:
         d = os.read(fd, size)
         size = size - len(d)
-        data = data + d.decode('utf8')
+        data += d
 
-    return data
+    return data.decode("UTF-8")
 
 
 def read_auth_reply():
@@ -131,25 +134,36 @@ def decode_basic_header(response):
     return user, password
 
 
-def send_decrypted_key(fname, password):
-    r, w = os.pipe()
-    os.set_inheritable(r, True)
-    os.set_inheritable(w, True)
-    p = subprocess.Popen(["openssl", "rsa", "-in", fname, "-passin", "fd:{}".format(r)],
-                         preexec_fn=lambda: os.close(w),
-                         pass_fds=(r,),
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def load_key(fname, password):
+    # ssh-add has the annoying behavior that it re-asks without any limit if the password is wrong
+    # to mitigate, self-destruct to only allow one iteration
+    with open("/run/askpass", "w") as fd:
+        fd.write("""#!/bin/sh
+rm -f $0
+cat /run/password""")
 
-    os.write(w, password.encode('utf-8'))
-    os.close(w)
-    os.close(r)
+        os.fchmod(fd.fileno(), 0o755)
 
-    data, err = p.communicate()
+    env = os.environ.copy()
+    env["SSH_ASKPASS_REQUIRE"] = "force"
+    env["SSH_ASKPASS"] = "/run/askpass"
+
+    pass_fd = os.open("/run/password", os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_CLOEXEC, mode=0o600)
+    try:
+        os.write(pass_fd, password.encode("UTF-8"))
+        os.close(pass_fd)
+
+        p = subprocess.run(["ssh-add", "-t", "30", fname],
+                           check=False, env=env,
+                           capture_output=True, encoding="UTF-8")
+    finally:
+        os.unlink("/run/password")
+
     if p.returncode == 0:
-        send_auth_command(None, "private-key {}".format(data.decode('utf-8')))
+        send_auth_command(None, "ssh-agent")
         return True
     else:
-        sys.stderr.write("Couldn't open private key: {}".format(err))
+        print("Couldn't load private key:", p.stderr, file=sys.stderr)
         return False
 
 
@@ -168,8 +182,8 @@ def main(args):
             send_problem_init("internal-error", str(e), {})
             raise
 
-        if send_decrypted_key(key_name, password):
-            host = "{}@{}".format(user, host)
+        if load_key(key_name, password):
+            host = f"{user}@{host}"
         else:
             send_problem_init("authentication-failed", "Couldn't open private key",
                               {"password": "denied"})

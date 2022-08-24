@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -25,9 +25,9 @@ import tempfile
 import unittest
 from glob import glob
 
-import parent
+import parent  # noqa: F401
 import testvm
-from testlib import *
+from testlib import skipDistroPackage, test_main
 
 
 @unittest.skipUnless("TEST_OS" in os.environ, "TEST_OS not set")

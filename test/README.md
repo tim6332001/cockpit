@@ -21,7 +21,7 @@ You first need to build cockpit, and install it into a VM:
 
     $ test/image-prepare
 
-This uses the default OS image, which is currently Fedora 35. See `$TEST_OS`
+This uses the default OS image, which is currently Fedora 36. See `$TEST_OS`
 below how to select a different one.
 
 In most cases you want to run an individual test in a suite, for example:
@@ -120,7 +120,9 @@ You can set these environment variables to configure the test suite:
                   "chromium" is the default.
 
     TEST_SHOW_BROWSER  Set to run browser interactively. When not specified,
-                       browser is run in headless mode.
+                       browser is run in headless mode. When set to "pixels",
+                       the browser will be resized to the exact dimensions that
+                       are used for pixel tests.
 
     TEST_TIMEOUT_FACTOR Scale normal timeouts by given integer. Useful for
                         slow/busy testbeds or architectures.
@@ -158,14 +160,6 @@ Now you can change the code (see [HACKING.md](../HACKING.md) for webpack watch
 mode), copy it into the VM, and run the test against it:
 
     $ test/verify/check-connection --machine 127.0.0.2:2201 --browser 127.0.0.2:9091
-
-# Container tests
-
-The `test/containers/` tests use the same VMs as the above `test/verify/` ones.
-But they don't have a separate "prepare" step/script; instead, the first time
-you run `test/containers/run-tests` you need to use the `-i` option to
-build/install cockpit into the test VM. This needs to be done with a compatible
-`TEST_OS` (usually a recent `fedora-*`).
 
 ## Debugging tests
 

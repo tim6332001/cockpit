@@ -5,21 +5,12 @@ actions:
   post-upstream-clone:
     # HACK: spec must be next to the generated tarball; https://github.com/packit/packit/issues/1621
     - cp tools/cockpit.spec .
-    # HACK: until FMF uses tests from dist-git source tarball: https://github.com/teemtee/tmt/issues/585
-    - sh -exc 'mkdir -p tmp; curl --silent --fail https://src.fedoraproject.org/rpms/cockpit/raw/rawhide/f/plans/upstream.fmf | sed -r "/ref:/ s/[0-9.]+/$(git describe --abbrev=0)/" > tmp/upstream.fmf'
 
   create-archive:
     # The sandcastle doesn't have enough ram to run webpack, so wait
     # until the webpack-jumpstart workflow has run and grab the result.
     - tools/webpack-jumpstart --wait --rebase
     - tools/make-dist
-
-# HACK: packit.yml and spec get synced by default; drop this when the plans/upstream.fmf HACK above gets dropped
-files_to_sync:
-  - packit.yaml
-  - cockpit.spec
-  - src: tmp/upstream.fmf
-    dest: plans/upstream.fmf
 
 srpm_build_deps:
   - automake
@@ -32,8 +23,7 @@ copy_upstream_release_description: true
 jobs:
   - job: tests
     trigger: pull_request
-    metadata:
-      targets:
+    targets:
       - fedora-35
       - fedora-36
       - fedora-development
@@ -43,23 +33,21 @@ jobs:
   # run build/unit tests on some interesting architectures
   - job: copr_build
     trigger: pull_request
-    metadata:
-      targets:
-        # 32 bit
-        - fedora-development-i386
-        # big-endian
-        - fedora-development-s390x
+    targets:
+      # 32 bit
+      - fedora-development-i386
+      # big-endian
+      - fedora-development-s390x
 
   - job: copr_build
     trigger: release
-    metadata:
-      owner: "@cockpit"
-      project: "cockpit-preview"
-      preserve_project: True
-      # HACK: hardcoding this list is redundant and hard to change; packit
-      # should just use the existing config for permanent COPRs;
-      # https://github.com/packit/packit-service/issues/1499
-      targets:
+    owner: "@cockpit"
+    project: "cockpit-preview"
+    preserve_project: True
+    # HACK: hardcoding this list is redundant and hard to change; packit
+    # should just use the existing config for permanent COPRs;
+    # https://github.com/packit/packit-service/issues/1499
+    targets:
       - fedora-35
       - fedora-36
       - fedora-development
@@ -79,24 +67,21 @@ jobs:
 
   - job: propose_downstream
     trigger: release
-    metadata:
-      dist_git_branches:
-        - fedora-development
-        - fedora-35
-        - fedora-36
+    dist_git_branches:
+      - fedora-development
+      - fedora-35
+      - fedora-36
 
   - job: koji_build
     trigger: commit
-    metadata:
-      dist_git_branches:
-        - fedora-development
-        - fedora-35
-        - fedora-36
+    dist_git_branches:
+      - fedora-development
+      - fedora-35
+      - fedora-36
 
   - job: bodhi_update
     trigger: commit
-    metadata:
-      dist_git_branches:
-        # rawhide updates are created automatically
-        - fedora-35
-        - fedora-36
+    dist_git_branches:
+      # rawhide updates are created automatically
+      - fedora-35
+      - fedora-36

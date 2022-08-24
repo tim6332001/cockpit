@@ -1,15 +1,10 @@
 NULL =
-BUILT_SOURCES =
 CLEANFILES =
-bin_PROGRAMS =
 dist_noinst_DATA =
-libexec_PROGRAMS =
-libexec_SCRIPTS =
 man_MANS =
 noinst_DATA =
 noinst_LIBRARIES =
 noinst_PROGRAMS =
-sbin_PROGRAMS =
 
 # -----------------------------------------------------------------------------
 #  make dist
@@ -51,13 +46,17 @@ $(distdir)/tools/debian/copyright:
 
 DISTCHECK_CONFIGURE_FLAGS = --enable-prefix-only
 
-distcheck-hook:
-	$(srcdir)/tools/check-dist $(distdir)
+# Validate our AppStream metadata
+distcheck-hook::
+	find $(distdir) -name '*.metainfo.xml' -o -name '*.appdata.xml' | xargs appstream-util validate --nonet
+
+# validate that we don't bundle fonts in webpacks
+distcheck-hook::
+	! grep --color=auto -rn "\.\./fonts/OpenSans\|fonts/.*eot\|truetype" $(distdir)/dist
 
 # -----------------------------------------------------------------------------
 
 TESTS = \
-	test/check-dist \
 	test/static-code \
 	$(NULL)
 
@@ -73,43 +72,24 @@ EXTRA_DIST += \
 	node_modules/ws \
 	$(NULL)
 
-AM_CPPFLAGS = \
-	-I$(top_srcdir)/src \
-	-DDATADIR=\"$(datadir)\" \
-	-DLIBEXECDIR=\""$(libexecdir)"\" \
-	-DPACKAGE_SYSCONF_DIR=\""$(sysconfdir)"\" \
-	$(NULL)
-
-AM_CFLAGS = \
-	-pthread \
-	-Wall \
-	-Werror=strict-prototypes \
-	-Werror=missing-prototypes \
-	-Werror=implicit-function-declaration \
-	-Werror=pointer-arith -Werror=init-self \
-	-Werror=format=2 \
-	-Werror=return-type \
-	-Werror=missing-include-dirs \
-	$(NULL)
-
 check: export VERBOSE=1
 
 TEST_EXTENSIONS = .html .sh
-HTML_LOG_COMPILER = $(top_srcdir)/test/common/tap-cdp --strip=$(abs_top_srcdir)/ ./test-server
+HTML_LOG_COMPILER = $(top_srcdir)/test/common/tap-cdp --strip=$(abs_top_srcdir)/ $(HTML_TEST_WRAPPER) ./test-server $(COCKPIT_BRIDGE)
 
-VALGRIND_ARGS = --trace-children=yes --quiet --error-exitcode=33 --gen-suppressions=all \
+VALGRIND = valgrind --trace-children=yes --quiet --error-exitcode=33 --gen-suppressions=all \
 	$(foreach file,$(wildcard $(srcdir)/tools/*.supp),--suppressions=$(file)) \
 	--num-callers=16 --leak-check=yes --show-leak-kinds=definite \
 	--errors-for-leak-kinds=definite --trace-children-skip='*mock*,/bin*,/usr/bin/*,/usr/local/bin'
 
 check-memory:
-	$(MAKE) LOG_FLAGS="valgrind $(VALGRIND_ARGS)" \
-	        HTML_LOG_FLAGS="valgrind $(VALGRIND_ARGS)" \
+	$(MAKE) LOG_FLAGS="$(VALGRIND)" \
+	        HTML_TEST_WRAPPER="$(VALGRIND)" \
 		COCKPIT_SKIP_SLOW_TESTS=1 \
 		$(AM_MAKEFLAGS) check TESTS="$(filter-out test/% bots/%,$(TESTS))"
 recheck-memory:
-	$(MAKE) LOG_FLAGS="-- valgrind $(VALGRIND_ARGS)" \
-	        HTML_LOG_FLAGS="valgrind $(VALGRIND_ARGS)" \
+	$(MAKE) LOG_FLAGS="$(VALGRIND_ARGS)" \
+	        HTML_TEST_WRAPPER="$(VALGRIND)" \
 		$(AM_MAKEFLAGS) recheck
 
 # checkout Cockpit's bots for standard test VM images and API to launch them
@@ -167,6 +147,7 @@ include doc/man/Makefile-man.am
 include pkg/Makefile.am
 include po/Makefile.am
 include selinux/Makefile.am
+include src/Makefile.am
 include src/branding/arch/Makefile.am
 include src/branding/centos/Makefile.am
 include src/branding/debian/Makefile.am

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 # This file is part of Cockpit.
 #
@@ -17,8 +17,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
 
-import parent
-from testlib import *
+import parent  # noqa: F401
+from testlib import MachineCase, nondestructive, skipBrowser, skipDistroPackage, test_main
 
 
 def line_sel(i):
@@ -193,6 +193,8 @@ PROMPT_COMMAND='printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/
         path = m.execute("cat /tmp/path").strip()
         if m.ostree_image:
             self.assertIn("/usr/local/bin:/usr/bin", path)
+        elif m.image == "arch":
+            self.assertIn("/usr/local/sbin:/usr/local/bin:/usr/bin", path)
         else:
             self.assertIn("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", path)
         self.assertNotIn(":/.local", path)  # would happen with empty $HOME

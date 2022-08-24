@@ -19,7 +19,7 @@ import os
 import textwrap
 import warnings
 
-from testlib import *
+from testlib import MachineCase
 
 
 class PackageCase(MachineCase):
@@ -71,6 +71,7 @@ class PackageCase(MachineCase):
             self.restore_file("/etc/pacman.d/mirrorlist")
             self.restore_file("/usr/share/libalpm/hooks/90-packagekit-refresh.hook")
             self.machine.execute("rm /etc/pacman.conf /etc/pacman.d/mirrorlist /var/lib/pacman/sync/* /usr/share/libalpm/hooks/90-packagekit-refresh.hook")
+            self.machine.execute("test -d /var/lib/PackageKit/alpm && rm -r /var/lib/PackageKit/alpm || true")  # Drop alpm state directory as it interferes with running offline
             # Initial config for installation
             empty_repo_dir = '/var/lib/cockpittest/empty'
             config = f"""
@@ -94,7 +95,7 @@ Server = file://{empty_repo_dir}
 
         # have PackageKit start from a clean slate
         self.machine.execute("systemctl stop packagekit")
-        self.machine.execute("systemctl kill --signal=SIGKILL packagekit; rm -rf /var/cache/PackageKit")
+        self.machine.execute("systemctl kill --signal=SIGKILL packagekit || true; rm -rf /var/cache/PackageKit")
         self.machine.execute("systemctl reset-failed packagekit || true")
         self.restore_file("/var/lib/PackageKit/transactions.db")
 
@@ -310,11 +311,11 @@ post_upgrade() {{
 
         cmd = """
         cd /tmp/
-        su builder -c "makepkg -f -d --skipinteg --noconfirm"
+        su builder -c "makepkg --cleanbuild --clean --force --nodeps --skipinteg --noconfirm"
 """
 
         if install:
-            cmd += f"pacman -U --noconfirm {name}-{version}-{release}-{arch}.pkg.tar.zst\n"
+            cmd += f"pacman -U --overwrite '*' --noconfirm {name}-{version}-{release}-{arch}.pkg.tar.zst\n"
 
         cmd += f"mkdir -p {self.repo_dir}\n"
         cmd += f"mv *.pkg.tar.zst {self.repo_dir}\n"
@@ -323,7 +324,7 @@ post_upgrade() {{
         if postinst:
             cmd += f"rm /tmp/{name}.install"
         self.machine.execute(cmd)
-        self.addCleanup(self.machine.execute, f"pacman -R --noconfirm {name} 2>/dev/null || true")
+        self.addCleanup(self.machine.execute, f"pacman -Rdd --noconfirm {name} 2>/dev/null || true")
 
     def createAptChangelogs(self):
         # apt metadata has no formal field for bugs/CVEs, they are parsed from the changelog
